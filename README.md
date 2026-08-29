@@ -2,52 +2,59 @@ RAG VAAR Nacional
 
 Repositório responsável pela coleta, organização, tratamento e preparação de informações utilizadas pelo sistema de RAG (Retrieval-Augmented Generation) do VAAR Nacional.
 
-O projeto tem como objetivo centralizar e estruturar diferentes fontes de informação, preparando os dados para posterior indexação, recuperação semântica e utilização por aplicações baseadas em Inteligência Artificial.
+O projeto centraliza diferentes fontes de informação e prepara os dados para processos de indexação, recuperação semântica e utilização por aplicações baseadas em Inteligência Artificial.
 
 Objetivo
 
-O RAG VAAR Nacional busca fornecer uma base de informações confiável e organizada para apoiar a recuperação de conteúdos relevantes durante a interação com modelos de linguagem.
+O projeto tem como objetivo construir e manter uma base de informações estruturada e confiável para utilização na arquitetura RAG do VAAR Nacional.
 
-Este repositório concentra principalmente as etapas relacionadas à aquisição e preparação dos dados, permitindo que as informações sejam transformadas em um formato adequado para os processos posteriores de busca e geração de respostas.
+O pipeline contempla etapas de coleta, extração, tratamento, normalização e preparação dos dados, garantindo que os conteúdos estejam adequados para posterior recuperação e geração de respostas.
 
 Fluxo de dados
-
-De forma geral, o pipeline segue as seguintes etapas:
-
 Fontes de informação
-        ↓
-Coleta
-        ↓
-Extração
-        ↓
+        |
+        v
+     Coleta
+        |
+        v
+     Extração
+        |
+        v
 Limpeza e tratamento
-        ↓
-Normalização
-        ↓
-Estruturação dos documentos
-        ↓
+        |
+        v
+    Normalização
+        |
+        v
+   Estruturação
+        |
+        v
 Chunking / Segmentação
-        ↓
+        |
+        v
 Geração de embeddings
-        ↓
-Indexação
-        ↓
+        |
+        v
+    Indexação
+        |
+        v
 Recuperação semântica
-        ↓
-RAG VAAR Nacional
+        |
+        v
+   RAG VAAR Nacional
 
 Fontes de informação
 
-As informações podem ser obtidas a partir de diferentes fontes, de acordo com os dados necessários ao projeto, como:
+O projeto pode trabalhar com diferentes tipos de fontes, incluindo:
 
-Documentos e arquivos institucionais;
+Documentos institucionais;
+Arquivos estruturados e não estruturados;
 Bases de dados;
 APIs e serviços externos;
 Páginas e conteúdos públicos;
-Dados estruturados e não estruturados;
 Outras fontes relevantes para o VAAR Nacional.
 
-Cada fonte pode possuir um processo específico de coleta e tratamento.
+Cada fonte pode possuir um processo específico de coleta, extração e tratamento.
 
 Estrutura do projeto
 .
@@ -63,57 +70,77 @@ Estrutura do projeto
 │   ├── chunkers/         # Segmentação dos documentos
 │   └── pipelines/        # Pipelines de processamento
 │
-├── scripts/              # Scripts auxiliares e de execução
+├── scripts/              # Scripts auxiliares
 ├── tests/                # Testes automatizados
-├── docs/                 # Documentação adicional
-├── requirements.txt      # Dependências Python
+├── docs/                 # Documentação
+├── requirements.txt      # Dependências do projeto
 └── README.md
 
 
-A estrutura acima é uma referência e deve ser adaptada conforme a implementação atual do projeto.
+A estrutura acima é uma referência e deve ser ajustada conforme a implementação atual do projeto.
 
-Tecnologias
+Pipeline
+Coleta
 
-As tecnologias utilizadas podem variar de acordo com cada etapa do pipeline. Entre os principais componentes estão:
+Os dados são obtidos a partir das fontes configuradas no projeto.
 
-Python — desenvolvimento dos pipelines e rotinas de processamento;
-RAG — estratégia de recuperação e geração de informações;
-Embeddings — representação semântica dos conteúdos;
-Vector Store — armazenamento e recuperação por similaridade;
-APIs — integração com fontes externas;
-Docker — padronização do ambiente de execução, quando aplicável.
-Instalação
+Sempre que possível, são preservadas informações sobre a origem dos dados e seus respectivos metadados para garantir rastreabilidade.
 
-Clone o repositório:
+Extração
 
-git clone <URL_DO_REPOSITORIO>
-cd rag-vaar-nacional
+Os conteúdos relevantes são extraídos das fontes coletadas e convertidos para uma estrutura comum de processamento.
+
+Tratamento
+
+Os dados passam por processos de:
+
+Limpeza;
+Normalização;
+Padronização;
+Remoção de conteúdos irrelevantes;
+Deduplicação;
+Validação;
+Tratamento de caracteres;
+Organização dos metadados.
+Segmentação
+
+Documentos extensos podem ser divididos em partes menores, chamadas de chunks.
+
+A segmentação facilita a recuperação de trechos relevantes durante as consultas realizadas pelo sistema RAG.
+
+Embeddings
+
+Os conteúdos processados podem ser convertidos em representações vetoriais por meio de modelos de embeddings.
+
+Essas representações permitem realizar buscas baseadas em similaridade semântica.
+
+Indexação
+
+Após o processamento, os documentos e seus respectivos embeddings são preparados para indexação no mecanismo de armazenamento utilizado pela arquitetura RAG.
+
+Metadados
+
+Sempre que possível, os documentos devem manter informações que permitam identificar sua origem e contexto.
+
+Exemplo:
+
+{
+  "source": "fonte",
+  "url": "https://exemplo.gov.br",
+  "title": "Título do documento",
+  "document_type": "documento",
+  "created_at": "2026-01-01",
+  "updated_at": "2026-01-01"
+}
 
 
-Crie um ambiente virtual:
-
-python -m venv .venv
-
-
-Linux/macOS:
-
-source .venv/bin/activate
-
-
-Windows:
-
-.venv\Scripts\activate
-
-
-Instale as dependências:
-
-pip install -r requirements.txt
+A estrutura definitiva dos metadados deve seguir o padrão definido pela implementação do projeto.
 
 Configuração
 
-As variáveis de ambiente e credenciais utilizadas pelo projeto devem ser configuradas localmente.
+As configurações específicas do ambiente devem ser armazenadas por meio de variáveis de ambiente.
 
-Crie um arquivo .env:
+Exemplo de arquivo .env:
 
 API_KEY=
 DATABASE_URL=
@@ -121,54 +148,4 @@ VECTOR_STORE_URL=
 EMBEDDING_MODEL=
 
 
-Nunca versione chaves de API, credenciais, tokens ou outras informações sensíveis no repositório.
-
-Execução
-
-Os pipelines de coleta e processamento podem ser executados por meio dos scripts disponibilizados no projeto.
-
-Exemplo:
-
-python scripts/collect.py
-
-
-Processamento:
-
-python scripts/process.py
-
-
-Os comandos acima são exemplos e devem ser ajustados de acordo com os scripts efetivamente disponíveis no projeto.
-
-Pipeline de processamento
-1. Coleta
-
-Os dados são obtidos a partir das fontes configuradas no projeto.
-
-Nesta etapa são preservadas, sempre que possível, informações de origem e metadados importantes para rastreabilidade.
-
-2. Extração
-
-Os conteúdos relevantes são extraídos das fontes coletadas, convertendo diferentes formatos para uma estrutura comum.
-
-3. Tratamento
-
-Os dados passam por processos como:
-
-Remoção de conteúdo irrelevante;
-Normalização de textos;
-Padronização de campos;
-Tratamento de caracteres;
-Deduplicação;
-Validação dos dados;
-Preservação de metadados.
-4. Segmentação
-
-Documentos extensos podem ser divididos em partes menores (chunks), facilitando a recuperação dos trechos mais relevantes durante uma consulta.
-
-5. Embeddings
-
-Os conteúdos processados podem ser convertidos em representações vetoriais (embeddings), permitindo buscas baseadas em similaridade semântica.
-
-6. Indexação
-
-Os documentos e seus respectivos vetores são disponibilizados para o mecanismo de
+Credenciais, tokens e chaves de API não devem
