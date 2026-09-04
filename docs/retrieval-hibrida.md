@@ -206,29 +206,7 @@ não é o algoritmo, é decidir onde os vetores ficam.
 4. Opcionalmente, **busca textual nativa**, que permitiria aposentar o
    `rank_bm25` e rodar os dois lados dentro do mesmo banco.
 
-## 7. Sobre LangGraph
 
-**Não nesta camada.** Recuperação é função pura: entra query, sai lista. Não
-tem estado entre chamadas, não tem ciclo, não tem ramificação condicional, não
-tem humano no meio. LangGraph existe para grafos com estado, ciclos e
-checkpointing. Aqui ele adicionaria dependência pesada e superfície de debug
-para ganho zero, além de acoplar estes componentes a um orquestrador
-específico.
-
-Como funções puras, elas são testáveis isoladas e qualquer orquestrador
-embrulha em poucas linhas: LangGraph, LlamaIndex, FastAPI puro ou Streamlit.
-
-**Quando LangGraph passaria a fazer sentido:** se o time for implementar loop
-agêntico, ou seja, reescrita de query quando o recall vem baixo, Self-RAG,
-Corrective RAG, ou roteamento entre fontes diferentes. Aí ele entra por cima,
-chamando a recuperação como um nó do grafo, sem alterar nada aqui. A decisão
-fica em aberto e não bloqueia esta entrega.
-
-## 8. Próximos passos
-
-1. **Decidir o banco vetorial** (seção 6). É o que destrava a fusão.
-2. **Implementar o RRF** assim que 1 estiver decidido.
-3. **Montar conjunto de avaliação:** 30 a 50 perguntas com o trecho correto
    anotado, para medir Recall@5. Sem isso, qualquer ajuste de peso entre denso
    e lexical é chute.
 4. **Avaliar reranker** `Qwen3-Reranker-0.6B` sobre os candidatos fundidos.
