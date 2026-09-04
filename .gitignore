@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+.env
+.env.local
+
+# Artefatos gerados
+data/output/index/
+data/raw/
+data/processed/
+
+# Cache do HuggingFace
+.cache/
+
+.vscode/
+.idea/
+.DS_Store
+*.log
+.pytest_cache/

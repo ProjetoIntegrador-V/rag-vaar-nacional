@@ -1,0 +1,14 @@
+# ── Embedding denso: Qwen3-Embedding-0.6B via HuggingFace ─────────────────
+sentence-transformers>=3.0.0
+transformers>=4.51.0           # versao minima com suporte a arquitetura Qwen3
+torch>=2.1.0
+numpy>=1.24.0
+
+# ── Retriever lexical ─────────────────────────────────────────────────────
+rank-bm25>=0.2.2               # BM25 Okapi em memoria
+
+# ── Suporte ───────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+
+# ── Testes ────────────────────────────────────────────────────────────────
+pytest>=8.0.0
