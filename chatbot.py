@@ -36,6 +36,7 @@ from src.pipeline import (  # noqa: E402
     DESFECHO_RESPONDIDA,
     DESFECHO_SEM_CONTEXTO,
     ESTAGIOS,
+    MODOS_BUSCA,
     NO_BANCO,
     PROVEDORES,
     ArmazemPais,
@@ -142,10 +143,25 @@ with st.sidebar:
         if estado is not None:
             (st.success if estado[0] else st.error)(f"{rotulo}: {estado[1]}")
 
+    st.subheader("Busca")
+    # Medido nesta máquina: o Qdrant devolve a busca híbrida em 17 ms; o Qwen
+    # gasta 64 ms por token para vetorizar a consulta. Quem não tem GPU pode
+    # trocar a busca semântica por BM25 puro e responder na hora.
+    _modos = list(MODOS_BUSCA)
+    modo_busca = st.selectbox("Modo", _modos, format_func=lambda m: MODOS_BUSCA[m])
+    if modo_busca == "esparsa":
+        st.caption("Não carrega o Qwen: responde em milissegundos, mas só acha "
+                   "o que casa por palavra.")
+    else:
+        st.caption("O vetor denso é calculado na CPU e é a etapa mais cara do "
+                   "pipeline. Desligue o HyDE para encurtar o texto a vetorizar.")
+
     st.subheader("Estágios do pipeline")
     usar_reescrita = st.toggle("Reescrita da consulta", value=True)
     usar_filtros = st.toggle("Extração de filtros por metadado", value=True)
-    usar_hyde = st.toggle("HyDE (documento hipotético)", value=True)
+    usar_hyde = st.toggle("HyDE (documento hipotético)", value=True,
+                          help="Melhora a busca semântica, mas o parágrafo gerado "
+                               "é longo e vetorizá-lo na CPU custa dezenas de segundos.")
     usar_rerank = st.toggle("Reranking com cross-encoder", value=False,
                             help="Baixa 2,2 GB na primeira vez e é lento em CPU.")
     usar_pais = st.toggle("Expandir para o chunk pai", value=True)
@@ -153,6 +169,10 @@ with st.sidebar:
 
     candidatos = st.slider("Candidatos da busca híbrida", 5, 50, 20, 5)
     top_k = st.slider("Trechos enviados ao LLM", 1, 10, 5)
+    limite_contexto = st.slider("Tamanho do contexto (caracteres)", 2_000, 40_000, 10_000, 1_000,
+                                help="Uma página de tabela da Portaria 14 tem 24 mil caracteres. "
+                                     "O plano gratuito da Groq aceita 8.000 tokens por minuto, e o "
+                                     "pipeline gasta esse orçamento duas vezes: geração e avaliação.")
 
     if st.button("Limpar conversa", use_container_width=True):
         ss.mensagens, ss.traces = [], []
@@ -166,7 +186,9 @@ def montar_pipeline() -> Pipeline:
     llm = criar_cliente(provedor, llm_key, llm_modelo, llm_base_url)
     rec = Recuperador(
         qdrant_url=qdrant_url, qdrant_api_key=qdrant_key, colecao=colecao,
-        embedder=_embedder(), vocabulario=_vocabulario(),
+        # Em modo esparso o Qwen não é usado, então nem vale baixar 1,2 GB.
+        embedder=_embedder() if modo_busca != "esparsa" else None,
+        vocabulario=_vocabulario(),
         pais=_pais() if usar_pais else None,
         reranker=_reranker() if usar_rerank else None,
         tarefa_embedding=DEFAULT_TASK,
@@ -174,7 +196,8 @@ def montar_pipeline() -> Pipeline:
     cfg = ConfigPipeline(
         usar_reescrita=usar_reescrita, usar_filtros=usar_filtros, usar_hyde=usar_hyde,
         usar_rerank=usar_rerank, usar_contexto_pai=usar_pais, usar_avaliacao=usar_avaliacao,
-        candidatos=candidatos, top_k=top_k,
+        candidatos=candidatos, top_k=top_k, modo_busca=modo_busca,
+        limite_contexto_chars=limite_contexto,
     )
     return Pipeline(llm, rec, cfg)
 

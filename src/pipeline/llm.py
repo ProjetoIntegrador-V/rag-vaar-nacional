@@ -40,9 +40,10 @@ PROVEDORES: dict[str, dict] = {
     "groq": {
         "rotulo": "Groq (tem plano gratuito)",
         "base_url": "https://api.groq.com/openai/v1",
-        "modelo_sugerido": "llama-3.3-70b-versatile",
+        "modelo_sugerido": "openai/gpt-oss-120b",
         "precisa_chave": True,
-        "dica": "console.groq.com; confira o nome do modelo no painel",
+        "dica": "console.groq.com; a lista de modelos muda com frequência, "
+                "o botão Testar conexões mostra os disponíveis",
     },
     "gemini": {
         "rotulo": "Google Gemini (endpoint compatível)",
@@ -181,25 +182,66 @@ class ClienteOpenAICompativel:
             mensagens.append({"role": "system", "content": system})
         mensagens.append({"role": "user", "content": prompt})
 
+        extra: dict = {}
+        if self._raciocina():
+            # Em modelos com raciocínio (gpt-oss, qwen3, o-series) o limite de
+            # tokens inclui o raciocínio. Um teto de 16 tokens, suficiente para
+            # "1.0" num modelo comum, devolveria content vazio. Por isso o piso,
+            # e o esforço baixo para não gastar tokens pensando numa nota.
+            max_tokens = max(max_tokens, 1024)
+            extra["extra_body"] = {"reasoning_effort": "low"}
+
         # Modelos novos da OpenAI só aceitam max_completion_tokens; a maioria
         # dos servidores compatíveis só aceita max_tokens. Tenta o mais comum
         # e cai para o outro se a API reclamar do nome do parâmetro.
         try:
             r = self._client.chat.completions.create(
-                model=self.modelo, messages=mensagens, max_tokens=max_tokens, temperature=0)
-        except self._openai.BadRequestError as e:
-            if "max_completion_tokens" not in str(e):
+                model=self.modelo, messages=mensagens, max_tokens=max_tokens,
+                temperature=0, **extra)
+        except self._openai.APIStatusError as e:
+            if e.status_code == 413 or "too large" in str(e).lower():
+                # Groq gratuito: 8.000 tokens por minuto. Vale mais avisar o
+                # que reduzir do que repassar o JSON cru do provedor.
+                raise RuntimeError(
+                    "requisição grande demais para o provedor. Reduza o tamanho do "
+                    "contexto na barra lateral ou o número de trechos enviados ao LLM."
+                ) from e
+            if not isinstance(e, self._openai.BadRequestError):
                 raise
-            r = self._client.chat.completions.create(
-                model=self.modelo, messages=mensagens, max_completion_tokens=max_tokens)
+            msg = str(e)
+            if "reasoning_effort" in msg and extra:
+                extra = {}
+                r = self._client.chat.completions.create(
+                    model=self.modelo, messages=mensagens, max_tokens=max_tokens, temperature=0)
+            elif "max_completion_tokens" in msg:
+                r = self._client.chat.completions.create(
+                    model=self.modelo, messages=mensagens, max_completion_tokens=max_tokens, **extra)
+            else:
+                raise
 
         if r.usage is not None:
             self.ultimo_uso = {"input_tokens": r.usage.prompt_tokens,
                                "output_tokens": r.usage.completion_tokens}
         escolha = r.choices[0]
+        if escolha is None:
+            raise RuntimeError("o provedor não devolveu nenhuma escolha")
         if getattr(escolha, "finish_reason", None) == "content_filter":
             raise RespostaRecusada("o provedor bloqueou a resposta por filtro de conteúdo")
         return (escolha.message.content or "").strip()
+
+    _MARCAS_RACIOCINIO = ("gpt-oss", "qwen3", "deepseek-r", "gpt-5", "o1", "o3", "o4")
+
+    def _raciocina(self) -> bool:
+        nome = self.modelo.lower().rsplit("/", 1)[-1]        # tira "openai/" etc.
+        return any(nome.startswith(p) for p in self._MARCAS_RACIOCINIO)
+
+    def listar_modelos(self) -> list[str]:
+        """Modelos de texto que a chave enxerga, sem os de guarda e de áudio.
+        Os catálogos mudam (a Groq tirou o llama-3.3 do ar em 2026), então a
+        interface mostra isso quando o modelo pedido não existe."""
+        ids = sorted(m.id for m in self._client.models.list().data)
+        ruins = ("guard", "whisper", "orpheus", "tts", "embed")
+        return [i for i in ids if not any(r in i.lower() for r in ruins)]
 
     def testar_conexao(self) -> tuple[bool, str]:
         o = self._openai
@@ -212,7 +254,12 @@ class ClienteOpenAICompativel:
         except o.PermissionDeniedError:
             return False, f"sem permissão para o modelo '{self.modelo}' em {rot}"
         except o.NotFoundError:
-            return False, f"modelo '{self.modelo}' não encontrado em {rot}; confira o nome no painel"
+            try:
+                disponiveis = ", ".join(self.listar_modelos()[:8])
+            except Exception:  # noqa: BLE001
+                disponiveis = ""
+            return False, (f"modelo '{self.modelo}' não encontrado em {rot}"
+                           + (f"; disponíveis: {disponiveis}" if disponiveis else "; confira o nome no painel"))
         except o.RateLimitError:
             return False, f"limite de requisições em {rot}; tente em instantes"
         except o.APIStatusError as e:

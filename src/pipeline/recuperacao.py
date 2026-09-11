@@ -1,38 +1,32 @@
-"""Camada de recuperação: Qdrant híbrido, reranking e expansão para o chunk pai.
+"""Camada de recuperação do chatbot: casca fina sobre o motor da equipe.
 
-Nada aqui chama LLM. Tudo é determinístico dado o texto de entrada, o que
-permite testar a recuperação sem gastar token.
+A busca híbrida, o reranking e a montagem do contexto vivem em
+`scripts/motor_recuperacao.py` (`MotorRecuperacaoVAAR`). Esta classe só:
 
-Pontos que não são óbvios e estão documentados no código:
-- o filtro de metadado vai DENTRO de cada prefetch, senão vaza (ver buscar);
-- o vetor esparso da consulta só usa termos que já existem no vocabulário;
-- o reranker é opcional porque pesa mais de 2 GB;
-- "chunk pai" aqui é a página original do JSONL, porque a carga reparticionou
-  as páginas em pedaços de 1.024 tokens (sufixo _sN no chunk_id).
+- valida credenciais antes de abrir conexão (url vazia faria o cliente
+  apontar para localhost:6333 e o erro seria um "WinError 10061" opaco);
+- expõe cada etapa do motor separadamente, para o orquestrador cronometrar
+  busca e rerank como estágios distintos na aba Pipeline;
+- acrescenta o small-to-big: troca o sub-chunk pela página original do JSONL,
+  porque a carga reparticionou páginas em pedaços de 1.024 tokens (sufixo _sN).
+
+Nada aqui chama LLM. Tudo é determinístico dado o texto de entrada.
 """
 from __future__ import annotations
 
 import json
 import re
 from pathlib import Path
-from typing import Any, Protocol, Sequence
+from typing import Any
 
-import numpy as np
-
-from src.esparso import tokenize_pt
-
-NOME_DENSO = "denso"
-NOME_ESPARSO = "esparso"
-RERANKER_PADRAO = "BAAI/bge-reranker-v2-m3"
-MAX_TOKENS_CONSULTA = 1024
-
-
-class Embedder(Protocol):
-    def encode_queries(self, texts: Sequence[str], task: str = ...) -> np.ndarray: ...
-
-
-class Reranker(Protocol):
-    def predict(self, pares: list[tuple[str, str]]) -> Sequence[float]: ...
+from scripts.motor_recuperacao import (
+    MAX_TOKENS_CONSULTA,
+    MAX_TOKENS_RERANK,
+    MODOS_BUSCA,
+    RERANKER_PADRAO,
+    MotorRecuperacaoVAAR,
+    usar_todos_os_nucleos,
+)
 
 
 # ── armazém de chunks pais (small-to-big) ─────────────────────────────────
@@ -75,30 +69,32 @@ class Recuperador:
         qdrant_url: str,
         qdrant_api_key: str,
         colecao: str,
-        embedder: Embedder,
+        embedder: Any,
         vocabulario: dict[str, int],
         pais: ArmazemPais | None = None,
-        reranker: Reranker | None = None,
+        reranker: Any | None = None,
         tarefa_embedding: str | None = None,
         timeout: float = 60.0,
     ) -> None:
-        from qdrant_client import QdrantClient
-
-        # Sem esta guarda, url vazia faz o cliente apontar para localhost:6333
-        # e o usuário recebe um "WinError 10061" opaco em vez de saber que
-        # esqueceu o endpoint.
         if not (qdrant_url or "").strip():
             raise ValueError("endpoint do Qdrant ausente: preencha a URL do cluster")
         if not (qdrant_api_key or "").strip():
             raise ValueError("API key do Qdrant ausente")
 
         self.colecao = colecao
-        self.embedder = embedder
-        self.vocabulario = vocabulario
         self.pais = pais
-        self.reranker = reranker
-        self.tarefa = tarefa_embedding
-        self._cliente = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=timeout)
+        self.motor = MotorRecuperacaoVAAR(
+            url=qdrant_url.strip(), api_key=qdrant_api_key.strip(), colecao=colecao,
+            vocabulario=vocabulario, motor_denso=embedder, reranker=reranker, timeout=timeout,
+        )
+
+    @property
+    def reranker(self):
+        return self.motor.reranker
+
+    @property
+    def _cliente(self):
+        return self.motor.banco
 
     # ── diagnóstico ──────────────────────────────────────────────────────
     def testar_conexao(self) -> tuple[bool, str]:
@@ -114,84 +110,33 @@ class Recuperador:
         except Exception as exc:  # noqa: BLE001
             return False, f"{type(exc).__name__}: {str(exc)[:160]}"
 
-    # ── vetores da consulta ──────────────────────────────────────────────
+    # ── etapas do motor, expostas uma a uma ──────────────────────────────
     def vetor_denso(self, texto: str) -> list[float]:
-        if self.tarefa:
-            v = self.embedder.encode_queries([texto], task=self.tarefa)[0]
-        else:
-            v = self.embedder.encode_queries([texto])[0]
-        return np.asarray(v, dtype=np.float32).tolist()
+        return self.motor.vetor_denso(texto)
 
     def vetor_esparso(self, texto: str):
-        """Só termos já presentes no vocabulário da coleção. Termo novo não
-        existe no índice e geraria um índice órfão."""
-        from qdrant_client import models
+        return self.motor.vetor_esparso(texto)
 
-        contagem: dict[int, float] = {}
-        for tok in tokenize_pt(texto):
-            idx = self.vocabulario.get(tok)
-            if idx is not None:
-                contagem[idx] = contagem.get(idx, 0.0) + 1.0
-        if not contagem:
-            return None
-        return models.SparseVector(indices=list(contagem), values=list(contagem.values()))
-
-    # ── busca híbrida ────────────────────────────────────────────────────
     def buscar(self, texto_denso: str, texto_esparso: str,
-               filtros: dict[str, Any] | None = None, candidatos: int = 20) -> list[dict[str, Any]]:
-        """Denso + esparso fundidos por RRF nativo do Qdrant.
+               filtros: dict[str, Any] | None = None, candidatos: int = 20,
+               modo: str = "hibrida") -> list[dict[str, Any]]:
+        """Etapas A e B do motor. `texto_denso` costuma ser o documento HyDE;
+        `texto_esparso` a pergunta reescrita mais a original, porque as âncoras
+        exatas ("art. 14") vivem na pergunta, não no documento inventado."""
+        return self.motor.buscar_hibrida(texto_esparso, texto_denso, candidatos, filtros, modo)
 
-        `texto_denso` costuma ser o documento hipotético (HyDE); `texto_esparso`
-        a pergunta reescrita mais a original, porque as âncoras exatas
-        ("art. 14") vivem na pergunta, não no documento inventado.
-        """
-        from qdrant_client import models
+    @property
+    def ultimo_tempo(self) -> dict[str, float]:
+        """Quanto da última busca foi embedding e quanto foi banco."""
+        return self.motor.ultimo_tempo
 
-        condicoes = []
-        for campo, valor in (filtros or {}).items():
-            condicoes.append(models.FieldCondition(key=campo, match=models.MatchValue(value=valor)))
-        filtro = models.Filter(must=condicoes) if condicoes else None
-
-        # O filtro tem de ir DENTRO de cada prefetch. Só no topo ele não
-        # propaga: cada lado traz candidatos sem filtro e o RRF apenas
-        # reordena, então vazam documentos de outros anos. Verificado.
-        prefetch = [models.Prefetch(query=self.vetor_denso(texto_denso),
-                                    using=NOME_DENSO, limit=candidatos, filter=filtro)]
-        esparso = self.vetor_esparso(texto_esparso)
-        if esparso is not None:
-            prefetch.append(models.Prefetch(query=esparso, using=NOME_ESPARSO,
-                                            limit=candidatos, filter=filtro))
-
-        resultado = self._cliente.query_points(
-            collection_name=self.colecao,
-            prefetch=prefetch,
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
-            query_filter=filtro,
-            limit=candidatos,
-            with_payload=True,
-        )
-        docs = []
-        for p in resultado.points:
-            d = dict(p.payload)
-            d["score_rrf"] = float(p.score)
-            docs.append(d)
-        return docs
-
-    # ── reranking ────────────────────────────────────────────────────────
     def rerankear(self, pergunta: str, docs: list[dict[str, Any]], top_k: int = 5) -> list[dict[str, Any]]:
-        if not docs:
-            return []
-        if self.reranker is None:
-            return docs[:top_k]
-        pares = [(pergunta, d.get("texto", "")) for d in docs]
-        scores = self.reranker.predict(pares)
-        for d, s in zip(docs, scores):
-            d["score_rerank"] = float(s)
-        return sorted(docs, key=lambda d: d["score_rerank"], reverse=True)[:top_k]
+        """Etapa C do motor."""
+        return self.motor.rerankear(pergunta, docs, top_k)
 
     # ── small-to-big ─────────────────────────────────────────────────────
     def expandir_pais(self, docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Troca cada sub-chunk pela página original, sem repetir a mesma página.
+        """Etapa D: troca cada sub-chunk pela página original, sem repetir.
 
         Mantém a ordem do reranking: o primeiro pai a aparecer é o do melhor
         sub-chunk. Quando o pai não existe no armazém, o próprio chunk segue.
@@ -224,6 +169,7 @@ def carregar_embedder(modelo: str = "Qwen/Qwen3-Embedding-0.6B"):
     sentence-transformers assume 32768 e estoura memória em texto longo."""
     from src.embedding import QwenEmbedder
 
+    usar_todos_os_nucleos()
     emb = QwenEmbedder(model_name=modelo, batch_size=8)
     emb.model.max_seq_length = MAX_TOKENS_CONSULTA
     return emb
@@ -232,7 +178,7 @@ def carregar_embedder(modelo: str = "Qwen/Qwen3-Embedding-0.6B"):
 def carregar_reranker(modelo: str = RERANKER_PADRAO):
     from sentence_transformers import CrossEncoder
 
-    return CrossEncoder(modelo, max_length=1024)
+    return CrossEncoder(modelo, max_length=MAX_TOKENS_RERANK)
 
 
 def carregar_vocabulario(caminho: str | Path) -> dict[str, int]:

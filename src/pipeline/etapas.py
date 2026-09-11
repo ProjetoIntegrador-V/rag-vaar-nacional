@@ -1,10 +1,10 @@
 """Estágios do pipeline que dependem do LLM.
 
 Os quatro estágios que a equipe já escreveu são importados de `scripts/` e
-usados como estão: roteador de intenção, HyDE e geração ancorada. A avaliação
-de factualidade é reimplementada aqui porque a versão original faz
-`float(texto)` direto e quebra se o modelo devolver qualquer coisa além de um
-número.
+usados como estão: roteador de intenção, HyDE, geração ancorada e avaliação
+de factualidade. A avaliação recebe o LLM embrulhado num proxy que reduz a
+saída ao primeiro número, porque a função original faz `float(texto)` direto
+e quebraria se o modelo escrevesse "Nota: 1.0" ou "0,5".
 
 Dois estágios são novos, previstos na arquitetura alvo (docs/arquitetura-alvo.md)
 e ainda não existiam no código: reescrita da consulta e extração de filtros.
@@ -15,6 +15,7 @@ import json
 import re
 from typing import Any
 
+from scripts.avaliacao_metricas import avaliar_factualidade
 from scripts.filtro_intencao import roteador_de_intencao
 from scripts.geracao_hyde import gerar_documento_hyde
 from scripts.geracao_rag_final import gerar_resposta_final
@@ -107,40 +108,36 @@ def gerar(pergunta: str, documentos: list[dict[str, Any]], llm: ClienteLLM) -> s
     return gerar_resposta_final(pergunta, documentos, llm)
 
 
-# ── 6. avaliação de factualidade ───────────────────────────────────────────
-PROMPT_AVALIACAO = """Analise a resposta abaixo e compare com o contexto fornecido.
-A resposta contém alguma informação, número ou sigla que NÃO está presente no contexto?
-Responda apenas com a nota:
-1.0 = Totalmente ancorado no contexto.
-0.0 = Contém alucinação ou informações externas.
+# ── 6. avaliação de factualidade (código da equipe) ────────────────────────
+class _LLMSoNumero:
+    """Proxy que entrega a `avaliar_factualidade` só o primeiro número da
+    resposta, já limitado a [0, 1]. Assim o `float()` da função original
+    nunca quebra, e a chamada ao modelo continua sendo uma só."""
 
-Contexto:
-{contexto}
+    def __init__(self, llm: ClienteLLM) -> None:
+        self._llm = llm
+        self.sem_nota = False
 
-Resposta:
-{resposta}
-
-Nota:"""
+    def gerar_texto(self, prompt: str, **kw: Any) -> str:
+        bruto = self._llm.gerar_texto(prompt, max_tokens=16, effort="low")
+        m = re.search(r"\d+(?:[.,]\d+)?", bruto)
+        if not m:
+            self.sem_nota = True
+            return "0"
+        valor = float(m.group(0).replace(",", "."))
+        return str(max(0.0, min(1.0, valor)))
 
 
 def avaliar(resposta: str, documentos: list[dict[str, Any]], llm: ClienteLLM) -> float | None:
-    """Mesmo prompt de scripts/avaliacao_metricas.py, com parse tolerante.
-
-    A versão da equipe faz `float(texto)` e levanta ValueError se o modelo
-    escrever "Nota: 1.0" ou "0,5". Aqui extraímos o primeiro número que aparecer
-    e limitamos a [0, 1]. Devolve None se não houver número nenhum.
-    """
-    contexto = "\n\n".join(
-        f"[{d.get('titulo', 'sem título')} ({d.get('ano', '?')})] {d.get('texto', '')}"
+    """Chama `scripts/avaliacao_metricas.avaliar_factualidade` como está.
+    Devolve None quando o modelo não escreve número nenhum."""
+    contexto = [
+        {"titulo": d.get("titulo"), "ano": d.get("ano"), "texto": d.get("texto")}
         for d in documentos
-    )
-    bruto = llm.gerar_texto(PROMPT_AVALIACAO.format(contexto=contexto, resposta=resposta),
-                            max_tokens=16, effort="low")
-    m = re.search(r"\d+(?:[.,]\d+)?", bruto)
-    if not m:
-        return None
-    valor = float(m.group(0).replace(",", "."))
-    return max(0.0, min(1.0, valor))
+    ]
+    proxy = _LLMSoNumero(llm)
+    nota = avaliar_factualidade(resposta, contexto, proxy)
+    return None if proxy.sem_nota else nota
 
 
 # ── util ───────────────────────────────────────────────────────────────────

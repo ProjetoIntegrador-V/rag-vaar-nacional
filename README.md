@@ -68,7 +68,7 @@ chatbot mostra, para cada pergunta, até onde ela chegou.
 | 2. Extração | PDF e HTML para JSON | `data/fonte/fundeb_vaar_atualizado.json` | pronto, 1 falha |
 | 3. Chunking | Segmenta em ~600 tokens | `scripts/chunking.py` | pronto |
 | 4. Embedding e indexação | Vetoriza e sobe ao Qdrant | `notebooks/02_embeddings_qdrant.ipynb` | pronto |
-| 5. Recuperação | Busca híbrida, reranking, chunk pai | `src/pipeline/recuperacao.py` | pronto |
+| 5. Recuperação | Busca híbrida, reranking, chunk pai | `scripts/motor_recuperacao.py` | pronto |
 | 6. Geração | Roteamento, reescrita, HyDE, resposta | `src/pipeline/etapas.py` + `scripts/` | pronto |
 | 7. Avaliação | Factualidade por LLM | `src/pipeline/etapas.py` | pronto |
 | Interface | Chatbot com rastro do pipeline | `chatbot.py` | pronto |
@@ -480,10 +480,23 @@ pergunta
   9 avaliacao     juiz por LLM dá nota de factualidade; não bloqueia a resposta
 ```
 
-Os estágios 1, 4, 8 e 9 reutilizam os scripts da equipe em `scripts/`. Os
-estágios 2, 3, 6 e 7 vinham da arquitetura alvo e foram implementados em
-`src/pipeline/`. Cada um pode ser ligado ou desligado na barra lateral, e um
-estágio desligado aparece na aba Pipeline como "pulado", não some.
+Os estágios reutilizam os scripts da equipe em `scripts/`:
+
+| Estágio | Código |
+|---|---|
+| 1 roteador | `filtro_intencao.roteador_de_intencao` |
+| 4 hyde | `geracao_hyde.gerar_documento_hyde` |
+| 5 busca e 6 rerank | `motor_recuperacao.MotorRecuperacaoVAAR` (etapas A, B e C) |
+| 8 geracao | `geracao_rag_final.gerar_resposta_final` |
+| 9 avaliacao | `avaliacao_metricas.avaliar_factualidade` |
+
+Os estágios 2 (reescrita), 3 (metadados) e 7 (chunk pai) vinham da arquitetura
+alvo e foram implementados em `src/pipeline/`. O `motor_recuperacao.py`
+recebeu o mínimo para rodar contra a coleção real: imports pelos pacotes do
+repo, conexão em nuvem, vocabulário termo -> índice no vetor esparso e filtro
+dentro de cada prefetch; o cabeçalho do arquivo lista cada mudança. Cada
+estágio pode ser ligado ou desligado na barra lateral, e um estágio desligado
+aparece na aba Pipeline como "pulado", não some.
 
 ### Duas decisões que não são óbvias
 
@@ -495,6 +508,61 @@ não num parágrafo inventado pelo modelo.
 **O reranker vem desligado por padrão.** O `bge-reranker-v2-m3` pesa 2,2 GB e
 é lento em CPU. Ligue na barra lateral quando houver GPU ou quando a precisão
 da ordenação importar mais que a latência.
+
+### Onde vai o tempo
+
+Medido na máquina de desenvolvimento (4 núcleos, sem GPU), contra o cluster
+real com 2.539 pontos:
+
+| Etapa | Tempo |
+|---|---|
+| Qdrant, busca híbrida com fusão RRF | **17 ms** |
+| Qwen, vetorizar a consulta | **64 ms por token** |
+
+O banco não é o gargalo: ele responde em milissegundos. O custo é vetorizar a
+consulta localmente, e ele cresce com o tamanho do texto. Como o HyDE escreve
+um parágrafo inteiro (cerca de 470 tokens), era esse parágrafo que levava a
+busca a mais de 50 segundos. Três medidas cortaram isso:
+
+1. **Usar todos os núcleos.** O torch usava 2 de 4 por padrão; 458 tokens
+   caíram de 53 s para 31 s só com isso.
+2. **Truncar a consulta em 256 tokens.** Os chunks foram indexados com até
+   1.024 tokens, mas a consulta não precisa do mesmo teto: o vetor truncado em
+   256 tokens tem cosseno 0,987 contra o vetor do texto inteiro. Mesma direção,
+   um terço do tempo.
+3. **Modo de busca selecionável**, na barra lateral:
+
+| Modo | O que faz | Latência |
+|---|---|---|
+| Híbrida | denso + esparso, fundidos por RRF | dominada pelo Qwen |
+| Só esparsa | BM25 puro; **não carrega o Qwen** | ~50 ms |
+| Só densa | apenas semântica | dominada pelo Qwen |
+
+Com HyDE desligado e busca híbrida, a etapa cai para cerca de 4 s. Em modo
+esparso, para 53 ms. Quem tiver GPU não precisa de nada disso.
+
+### Teto de contexto
+
+A expansão para o chunk pai devolve a página inteira, e uma página de tabela
+da Portaria 14 tem 24 mil caracteres. Cinco delas somam 120 mil, o que estoura
+o limite de qualquer provedor: no plano gratuito da Groq são 8.000 tokens por
+minuto, e o pipeline gasta esse orçamento duas vezes, na geração e na
+avaliação. O contexto é cortado para caber no teto da barra lateral (10 mil
+caracteres por padrão), repartindo o orçamento como uma torneira: quem já cabe
+na fatia leva o texto inteiro e devolve a sobra, então um trecho curto nunca é
+cortado por causa de um vizinho gigante. Os trechos cortados aparecem
+marcados na aba Pipeline.
+
+### Filtro de metadado que não casa com nada
+
+O filtro é um palpite do LLM, e às vezes ele pede uma combinação que não
+existe. "Portaria 14 de 2026" vira `ano=2026 + Portaria Interministerial`, mas
+a Portaria 14 está indexada como **2025**: foi publicada em dezembro de 2025 e
+rege o exercício de 2026. Antes, a busca voltava vazia e a resposta era "a
+legislação recuperada não contém essa informação", o que era falso. Agora,
+quando o filtro não casa com nada, a busca é repetida sem ele e a aba Pipeline
+registra qual filtro foi ignorado. O vetor denso fica em cache, então a
+repetição não custa nada.
 
 ### Provedor de LLM
 
@@ -592,7 +660,7 @@ src/
   pipeline/
     llm.py                                   clientes Anthropic e OpenAI-compatível
     etapas.py                                roteador, reescrita, filtros, HyDE, geração, avaliação
-    recuperacao.py                           Qdrant híbrido, reranker, chunk pai
+    recuperacao.py                           casca sobre scripts/motor_recuperacao.py + chunk pai
     orquestrador.py                          encadeia os estágios e produz o Trace
     trace.py                                 registro de por onde a pergunta passou
 

@@ -19,6 +19,7 @@ from .llm import (
 )
 from .orquestrador import ConfigPipeline, Pipeline
 from .recuperacao import (
+    MODOS_BUSCA,
     ArmazemPais,
     Recuperador,
     carregar_embedder,
@@ -44,5 +45,5 @@ __all__ = [
     "ArmazemPais", "ClienteAnthropic", "ClienteLLM", "ClienteOpenAICompativel",
     "ConfigPipeline", "Etapa", "MODELO_PADRAO", "PROVEDORES", "Pipeline", "Recuperador",
     "RespostaRecusada", "Trace", "carregar_embedder", "carregar_reranker",
-    "carregar_vocabulario", "criar_cliente",
+    "MODOS_BUSCA", "carregar_vocabulario", "criar_cliente",
 ]

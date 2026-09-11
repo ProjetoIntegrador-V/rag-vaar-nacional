@@ -45,20 +45,28 @@ class LLMFalso:
             return "Nos termos do art. 14 da Lei 14.113/2020, a habilitação ao VAAR..."
         if "EXCLUSIVAMENTE os trechos" in prompt:
             return "As condicionalidades são cinco. Fonte: Resolução CIF 24/2026."
-        if "Nota:" in prompt:
+        if "nota:" in prompt.lower():          # prompt de scripts/avaliacao_metricas.py
             return "Nota: 1.0"
         return ""
 
 
 class RecuperadorFalso:
-    def __init__(self, docs):
+    """Mesma assinatura do Recuperador real. `docs_sem_filtro` permite simular
+    o caso em que o filtro de metadado não casa com nada mas o corpus tem
+    resposta."""
+
+    def __init__(self, docs, docs_sem_filtro=None):
         self._docs = docs
+        self._docs_sem_filtro = docs if docs_sem_filtro is None else docs_sem_filtro
         self.reranker = None
         self.filtros_recebidos = None
+        self.chamadas_busca = []
+        self.ultimo_tempo = {"denso_ms": 12.0, "qdrant_ms": 3.0}
 
-    def buscar(self, texto_denso, texto_esparso, filtros=None, candidatos=20):
+    def buscar(self, texto_denso, texto_esparso, filtros=None, candidatos=20, modo="hibrida"):
         self.filtros_recebidos = filtros
-        return list(self._docs)
+        self.chamadas_busca.append({"filtros": filtros, "modo": modo})
+        return list(self._docs if filtros else self._docs_sem_filtro)
 
     def rerankear(self, pergunta, docs, top_k=5):
         return docs[:top_k]
@@ -236,3 +244,162 @@ def test_catalogo_de_provedores_consistente():
             continue
         assert info["base_url"].startswith("http"), nome
         assert info["modelo_sugerido"], nome
+
+
+# ── motor de recuperação da equipe (sem rede, sem modelo) ─────────────────
+def _motor_sem_conexao(vocab):
+    from scripts.motor_recuperacao import MotorRecuperacaoVAAR
+    m = MotorRecuperacaoVAAR.__new__(MotorRecuperacaoVAAR)
+    m.vocabulario = vocab
+    m.reranker = None
+    m._motor_denso = None
+    return m
+
+
+def test_motor_vetor_esparso_usa_indices_inteiros_do_vocabulario():
+    m = _motor_sem_conexao({"art": 7, "14": 3, "lei": 9})
+    sv = m.vetor_esparso("art. 14 da Lei 14.113, art. 14")
+    assert sv is not None
+    assert set(sv.indices) == {7, 3, 9}, "termo fora do vocabulário (14.113) não pode entrar"
+    assert dict(zip(sv.indices, sv.values))[7] == 2.0, "frequência conta repetições"
+    assert all(isinstance(i, int) for i in sv.indices)
+
+
+def test_motor_vetor_esparso_sem_termo_conhecido_devolve_none():
+    m = _motor_sem_conexao({"fundeb": 1})
+    assert m.vetor_esparso("receita de bolo") is None
+
+
+def test_motor_rerankear_sem_reranker_mantem_ordem_rrf():
+    m = _motor_sem_conexao({})
+    docs = [{"texto": "a"}, {"texto": "b"}, {"texto": "c"}]
+    assert m.rerankear("p", docs, top_k_final=2) == docs[:2]
+
+
+def test_motor_rerankear_com_reranker_reordena_e_marca_score():
+    class RerankerFalso:
+        def predict(self, pares):
+            return [0.1, 0.9, 0.5]
+    m = _motor_sem_conexao({})
+    m.reranker = RerankerFalso()
+    docs = [{"texto": "a"}, {"texto": "b"}, {"texto": "c"}]
+    saida = m.rerankear("p", docs, top_k_final=2)
+    assert [d["texto"] for d in saida] == ["b", "c"]
+    assert saida[0]["score_rerank"] == 0.9
+
+
+def test_motor_estruturar_contexto_preserva_chunk_id_para_small_to_big():
+    from scripts.motor_recuperacao import MotorRecuperacaoVAAR
+    saida = MotorRecuperacaoVAAR.estruturar_contexto(
+        [{"titulo": "T", "ano": 2026, "texto": "x", "chunk_id": "d_p1_c0_s2", "page": 1, "extra": 1}])
+    assert saida[0]["chunk_id"] == "d_p1_c0_s2" and saida[0]["page"] == 1
+    assert "extra" not in saida[0]
+
+
+# ── modo de busca e queda do filtro ────────────────────────────────────────
+def test_modo_de_busca_chega_ao_recuperador():
+    rec = RecuperadorFalso(DOCS)
+    Pipeline(LLMFalso(), rec, ConfigPipeline(modo_busca="esparsa")).executar("condicionalidades")
+    assert rec.chamadas_busca[0]["modo"] == "esparsa"
+
+
+def test_filtro_que_nao_casa_com_nada_e_repetido_sem_filtro():
+    """O LLM pede ano=2026 + Portaria Interministerial, combinação que não
+    existe na coleção. Em vez de responder 'sem contexto', repete sem filtro."""
+    rec = RecuperadorFalso([], docs_sem_filtro=DOCS)
+    t = Pipeline(LLMFalso(), rec).executar("quais condicionalidades habilitam ao VAAR em 2026")
+    assert t.desfecho == DESFECHO_RESPONDIDA
+    assert [c["filtros"] for c in rec.chamadas_busca] == [
+        {"ano": 2026, "tipo_documento": "Resolução"}, None]
+    busca = t.etapa("busca")
+    assert busca.dados["filtro_removido"] == {"ano": 2026, "tipo_documento": "Resolução"}
+    assert "ignorado" in busca.detalhe
+
+
+def test_sem_resultado_nem_com_nem_sem_filtro_ainda_para():
+    rec = RecuperadorFalso([], docs_sem_filtro=[])
+    t = Pipeline(LLMFalso(), rec).executar("quais condicionalidades habilitam ao VAAR em 2026")
+    assert t.desfecho == DESFECHO_SEM_CONTEXTO
+    assert t.onde_parou() == "busca"
+
+
+def test_busca_registra_onde_foi_o_tempo():
+    t = Pipeline(LLMFalso(), RecuperadorFalso(DOCS)).executar("condicionalidades")
+    assert t.etapa("busca").dados["tempo_interno"] == {"denso_ms": 12.0, "qdrant_ms": 3.0}
+    assert "denso 12 ms" in t.etapa("busca").detalhe
+
+
+def test_motor_modo_esparsa_nao_toca_no_qwen():
+    """Garante o ganho de latência: em modo esparso o embedder nem é acessado."""
+    from scripts.motor_recuperacao import MotorRecuperacaoVAAR
+
+    class BancoFalso:
+        def query_points(self, **kw):
+            self.prefetch = kw["prefetch"]
+            return type("R", (), {"points": []})()
+
+    m = MotorRecuperacaoVAAR.__new__(MotorRecuperacaoVAAR)
+    m.vocabulario = {"vaar": 1}
+    m.colecao = "c"
+    m.banco = BancoFalso()
+    m.ultimo_tempo = {}
+    m._ultimo_denso = None
+    m._motor_denso = None          # tocar no Qwen aqui baixaria 1,2 GB
+
+    m.buscar_hibrida("vaar", "documento hipotetico", 20, None, modo="esparsa")
+    assert len(m.banco.prefetch) == 1
+    assert m.banco.prefetch[0].using == "esparso"
+    assert "denso_ms" not in m.ultimo_tempo
+
+
+def test_motor_rejeita_modo_desconhecido():
+    from scripts.motor_recuperacao import MotorRecuperacaoVAAR
+    m = MotorRecuperacaoVAAR.__new__(MotorRecuperacaoVAAR)
+    with pytest.raises(ValueError, match="modo de busca"):
+        m.buscar_hibrida("a", "b", modo="magica")
+
+
+# ── teto de contexto ───────────────────────────────────────────────────────
+def test_contexto_curto_passa_intacto():
+    docs = [{"texto": "a" * 100}, {"texto": "b" * 100}]
+    saida, cortados = Pipeline._limitar_contexto(docs, 1000)
+    assert saida == docs and cortados == 0
+
+
+def test_teto_reparte_sobra_e_nao_corta_trecho_curto():
+    """O trecho de 50 chars cabe inteiro mesmo ao lado de um gigante."""
+    docs = [{"texto": "G" * 10_000}, {"texto": "p" * 50}]
+    saida, cortados = Pipeline._limitar_contexto(docs, 1_000)
+    assert cortados == 1
+    assert saida[1]["texto"] == "p" * 50, "o curto nao pode ser cortado"
+    assert saida[1].get("truncado") is None
+    assert saida[0]["truncado"] is True
+    assert saida[0]["texto"].endswith("[...]")
+    assert sum(len(d["texto"]) for d in saida) <= 1_000 + len(" [...]")
+
+
+def test_teto_respeita_o_orcamento_total():
+    docs = [{"texto": "x" * 24_000} for _ in range(5)]
+    saida, cortados = Pipeline._limitar_contexto(docs, 10_000)
+    assert cortados == 5
+    assert all(len(d["texto"]) <= 2_000 + len(" [...]") for d in saida)
+
+
+def test_pipeline_corta_o_contexto_antes_de_gerar():
+    llm = LLMFalso()
+    docs = [{"titulo": "T", "ano": 2026, "page": 1, "chunk_id": "c0", "texto": "z" * 30_000}]
+    t = Pipeline(llm, RecuperadorFalso(docs),
+                 ConfigPipeline(limite_contexto_chars=2_000)).executar("condicionalidades")
+    assert t.desfecho == DESFECHO_RESPONDIDA
+    prompt_geracao = next(p for p in llm.chamadas if "EXCLUSIVAMENTE" in p)
+    assert len(prompt_geracao) < 4_000, "o prompt tem de caber no orcamento"
+    assert t.fontes[0]["truncado"] is True
+
+
+def test_modo_esparso_nao_gasta_chamada_com_hyde():
+    llm = LLMFalso()
+    t = Pipeline(llm, RecuperadorFalso(DOCS),
+                 ConfigPipeline(modo_busca="esparsa")).executar("condicionalidades")
+    assert t.etapa("hyde").status == "pulado"
+    assert "esparso" in t.etapa("hyde").detalhe
+    assert not any("Nota Técnica do Inep" in p for p in llm.chamadas), "HyDE nao pode rodar"
