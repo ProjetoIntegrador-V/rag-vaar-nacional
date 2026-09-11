@@ -57,10 +57,36 @@ class ConfigPipeline:
     limite_contexto_chars: int = 10_000
 
 
+class _LLMContado:
+    """Repassa as chamadas ao cliente real e soma os tokens de cada uma.
+
+    O plano gratuito da Groq dá 8.000 tokens por minuto e 200.000 por dia, e
+    uma pergunta com geração e avaliação gasta cerca de 7.500. Sem ver esse
+    número na tela, o limite chega de surpresa.
+    """
+
+    def __init__(self, llm: ClienteLLM) -> None:
+        self._llm = llm
+        self.entrada = 0
+        self.saida = 0
+        self.chamadas = 0
+
+    def gerar_texto(self, prompt: str, **kw: Any) -> str:
+        resposta = self._llm.gerar_texto(prompt, **kw)
+        uso = getattr(self._llm, "ultimo_uso", None) or {}
+        self.entrada += uso.get("input_tokens", 0)
+        self.saida += uso.get("output_tokens", 0)
+        self.chamadas += 1
+        return resposta
+
+    def total(self) -> tuple[int, int]:
+        return self.entrada, self.saida
+
+
 class Pipeline:
     def __init__(self, llm: ClienteLLM, recuperador: Recuperador,
                  config: ConfigPipeline | None = None) -> None:
-        self.llm = llm
+        self.llm = _LLMContado(llm)
         self.rec = recuperador
         self.cfg = config or ConfigPipeline()
 
@@ -82,7 +108,7 @@ class Pipeline:
         cfg = self.cfg
 
         # 1. roteador: filtro lógico antes do banco
-        with t.medir("roteador") as e:
+        with t.medir("roteador", self.llm) as e:
             rota = etapas.rotear(t.pergunta, self.llm)
             if rota.get("status") != "aprovado":
                 e.status = STATUS_PAROU
@@ -95,7 +121,7 @@ class Pipeline:
         # 2. reescrita
         consulta = t.pergunta
         if cfg.usar_reescrita:
-            with t.medir("reescrita") as e:
+            with t.medir("reescrita", self.llm) as e:
                 consulta = etapas.reescrever(t.pergunta, self.llm)
                 e.detalhe = consulta
                 e.dados["consulta_reescrita"] = consulta
@@ -105,7 +131,7 @@ class Pipeline:
         # 3. filtros de metadado
         filtros: dict[str, Any] = {}
         if cfg.usar_filtros:
-            with t.medir("metadados") as e:
+            with t.medir("metadados", self.llm) as e:
                 filtros = etapas.extrair_filtros(t.pergunta, self.llm)
                 e.detalhe = ", ".join(f"{k}={v}" for k, v in filtros.items()) or "nenhum filtro explícito"
                 e.dados["filtros"] = filtros
@@ -120,7 +146,7 @@ class Pipeline:
             t.registrar("hyde", STATUS_PULADO,
                         detalhe="o modo esparso não usa vetor denso")
         elif cfg.usar_hyde:
-            with t.medir("hyde") as e:
+            with t.medir("hyde", self.llm) as e:
                 texto_denso = etapas.hyde(consulta, self.llm)
                 e.detalhe = texto_denso[:220] + ("..." if len(texto_denso) > 220 else "")
                 e.dados["documento_hipotetico"] = texto_denso
@@ -130,7 +156,7 @@ class Pipeline:
         # 5. busca híbrida. O lado esparso recebe pergunta original + reescrita:
         #    as âncoras exatas ("art. 14") estão aí, não no documento inventado.
         texto_esparso = f"{t.pergunta} {consulta}" if consulta != t.pergunta else t.pergunta
-        with t.medir("busca") as e:
+        with t.medir("busca", self.llm) as e:
             candidatos = self.rec.buscar(texto_denso, texto_esparso, filtros,
                                          cfg.candidatos, cfg.modo_busca)
 
@@ -172,7 +198,7 @@ class Pipeline:
 
         # 6. reranking
         if cfg.usar_rerank and self.rec.reranker is not None:
-            with t.medir("rerank") as e:
+            with t.medir("rerank", self.llm) as e:
                 top = self.rec.rerankear(t.pergunta, candidatos, cfg.top_k)
                 e.detalhe = f"{len(candidatos)} -> {len(top)} pelo cross-encoder"
         else:
@@ -183,7 +209,7 @@ class Pipeline:
 
         # 7. small-to-big
         if cfg.usar_contexto_pai:
-            with t.medir("contexto_pai") as e:
+            with t.medir("contexto_pai", self.llm) as e:
                 docs = self.rec.expandir_pais(top)
                 expandidos = sum(1 for d in docs if d.get("expandido"))
                 e.detalhe = f"{len(top)} sub-chunks -> {len(docs)} páginas ({expandidos} expandidas)"
@@ -203,7 +229,7 @@ class Pipeline:
         t.fontes = [self._resumo_doc(d) for d in docs]
 
         # 8. geração ancorada
-        with t.medir("geracao") as e:
+        with t.medir("geracao", self.llm) as e:
             t.resposta = etapas.gerar(t.pergunta, docs, self.llm)
             e.detalhe = f"{len(t.resposta)} caracteres, {len(docs)} fontes no contexto"
         t.desfecho = DESFECHO_RESPONDIDA
@@ -219,7 +245,7 @@ class Pipeline:
         # 9. avaliação: não bloqueia; erro aqui não derruba a resposta
         if cfg.usar_avaliacao:
             try:
-                with t.medir("avaliacao") as e:
+                with t.medir("avaliacao", self.llm) as e:
                     t.score_factualidade = etapas.avaliar(t.resposta, docs, self.llm)
                     e.detalhe = ("sem nota legível" if t.score_factualidade is None
                                  else f"factualidade = {t.score_factualidade:.1f}")

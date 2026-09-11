@@ -679,6 +679,46 @@ busca a mais de 50 segundos. Três medidas cortaram isso:
 Com HyDE desligado e busca híbrida, a etapa cai para cerca de 4 s. Em modo
 esparso, para 53 ms. Quem tiver GPU não precisa de nada disso.
 
+### Quanto custa uma pergunta
+
+Medido numa pergunta real, com `openai/gpt-oss-120b` na Groq, contando os
+tokens que o próprio provedor reporta em cada chamada:
+
+| Etapa | Entrada | Saída | Total |
+|---|---:|---:|---:|
+| Roteador | 157 | 23 | 180 |
+| Reescrita | 230 | 81 | 311 |
+| Metadados | 246 | 53 | 299 |
+| **Geração** | 2.839 | 438 | **3.277** |
+| **Avaliação** | 3.297 | 107 | **3.404** |
+| **Total** | 6.769 | 702 | **7.471** |
+
+Dois números saltam:
+
+- **geração e avaliação somam 89% do gasto.** As três primeiras etapas, que
+  parecem muitas chamadas, custam 790 tokens juntas. O peso está em quem
+  carrega o contexto recuperado;
+- **a avaliação sozinha é 46%.** Ela relê todo o contexto para dar uma nota e
+  não muda uma vírgula da resposta.
+
+No plano gratuito da Groq isso dá **8.000 tokens por minuto e 200.000 por
+dia, contados por modelo**. Ou seja, cerca de **26 perguntas por dia**, e uma
+pergunta sozinha quase estoura o teto do minuto.
+
+O que fazer quando o limite chegar:
+
+| Medida | Efeito |
+|---|---|
+| Desligar **Avaliar factualidade** | quase dobra as perguntas por dia |
+| Baixar **Tamanho do contexto** de 10.000 para 6.000 | corta cerca de 30% |
+| Trocar o modelo na barra lateral | a cota é por modelo, então o outro está zerado |
+| Esperar | o teto por minuto passa em segundos; o do dia, na virada da janela |
+
+A aba **Pipeline** mostra os tokens de cada etapa e a aba **Avaliação** traz o
+total da sessão, a média por pergunta e a estimativa de quantas cabem no dia.
+Quando o provedor recusa por limite, a mensagem diz se o teto foi o do minuto
+ou o do dia, que são coisas bem diferentes.
+
 ### Teto de contexto
 
 A expansão para o chunk pai devolve a página inteira, e uma página de tabela

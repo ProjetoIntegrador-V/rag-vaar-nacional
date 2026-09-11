@@ -357,19 +357,22 @@ def _render_trace(tr: Trace) -> None:
 
     banco = "chegou" if tr.chegou_ao_banco() else "não chegou"
     llm_final = "chegou" if tr.chegou_ao_llm_final() else "não chegou"
-    st.caption(f"Banco vetorial: **{banco}** · LLM de geração: **{llm_final}**")
+    tokens = tr.tokens_total()
+    extra = f" · Tokens: **{tokens:,}**".replace(",", ".") if tokens else ""
+    st.caption(f"Banco vetorial: **{banco}** · LLM de geração: **{llm_final}**{extra}")
 
     alcancados = {e.nome: e for e in tr.etapas}
     linhas = []
     for nome, rotulo in ESTAGIOS:
         e = alcancados.get(nome)
         if e is None:
-            status, dur, det = "nao_alcancado", "", "não alcançado"
+            status, dur, det, tok = "nao_alcancado", "", "não alcançado", ""
         else:
             status, dur, det = e.status, f"{e.duracao_ms} ms", e.detalhe
+            tok = f"{e.tokens:,}".replace(",", ".") if e.tokens else ""
         fase = "antes do banco" if nome in ANTES_DO_BANCO else ("banco" if nome in NO_BANCO else "LLM final")
         linhas.append({"": ICONE_STATUS[status], "Estágio": rotulo, "Fase": fase,
-                       "Tempo": dur, "Detalhe": det})
+                       "Tempo": dur, "Tokens": tok, "Detalhe": det})
     st.dataframe(linhas, use_container_width=True, hide_index=True,
                  column_config={"Detalhe": st.column_config.TextColumn(width="large")})
 
@@ -422,6 +425,22 @@ with aba_aval:
         c[2].metric("Barradas antes do banco", cont[DESFECHO_DESCARTADA])
         c[3].metric("Sem contexto", cont[DESFECHO_SEM_CONTEXTO])
         c[4].metric("Factualidade média", f"{sum(notas)/len(notas):.2f}" if notas else "—")
+
+        # Consumo de tokens: o plano gratuito da Groq dá 200.000 por dia, e o
+        # limite chega de surpresa se ninguém estiver olhando.
+        gasto = sum(t.tokens_total() for t in ss.traces)
+        if gasto:
+            media = gasto / total
+            d = st.columns(3)
+            d[0].metric("Tokens nesta sessão", f"{gasto:,}".replace(",", "."))
+            d[1].metric("Média por pergunta", f"{media:,.0f}".replace(",", "."))
+            d[2].metric("Perguntas em 200.000/dia", f"{int(200_000 // media)}" if media else "—")
+            st.caption(
+                "O plano gratuito da Groq dá 8.000 tokens por minuto e 200.000 por dia, "
+                "contados **por modelo**. A geração e a avaliação respondem por quase 90% "
+                "do gasto: desligar a avaliação, ou reduzir o tamanho do contexto, "
+                "praticamente dobra quantas perguntas cabem no dia."
+            )
 
         st.dataframe(
             [{"#": i + 1, "Pergunta": t.pergunta, "Desfecho": ROTULO_DESFECHO.get(t.desfecho, ("?",))[0],

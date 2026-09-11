@@ -19,6 +19,7 @@ editável por isso.
 """
 from __future__ import annotations
 
+import re
 from typing import Protocol
 
 # ── catálogo de provedores ─────────────────────────────────────────────────
@@ -199,6 +200,8 @@ class ClienteOpenAICompativel:
                 model=self.modelo, messages=mensagens, max_tokens=max_tokens,
                 temperature=0, **extra)
         except self._openai.APIStatusError as e:
+            if e.status_code == 429:
+                raise RuntimeError(_explicar_429(str(e))) from e
             if e.status_code == 413 or "too large" in str(e).lower():
                 # Groq gratuito: 8.000 tokens por minuto. Vale mais avisar o
                 # que reduzir do que repassar o JSON cru do provedor.
@@ -271,6 +274,34 @@ class ClienteOpenAICompativel:
             if self.provedor == "ollama":
                 return False, "Ollama não respondeu em localhost:11434; ele está rodando?"
             return False, f"sem conexão com {self.base_url}"
+
+
+# ── mensagens ──────────────────────────────────────────────────────────────
+def _explicar_429(bruto: str) -> str:
+    """Traduz o 429 do provedor para algo acionável.
+
+    O plano gratuito da Groq tem dois tetos: por minuto (TPM) e por dia (TPD).
+    São coisas muito diferentes: o primeiro passa em segundos, o segundo só
+    vira na virada da janela de 24 horas. A mensagem crua não deixa isso claro.
+    """
+    espera = re.search(r"try again in ([\dhms.]+)", bruto, re.I)
+    quando = f" Tente de novo em {espera.group(1).rstrip('.')}." if espera else ""
+
+    if "per day" in bruto.lower() or "(TPD)" in bruto:
+        return (
+            "limite DIÁRIO de tokens do provedor atingido." + quando +
+            " Enquanto isso: troque o modelo na barra lateral, porque a cota é "
+            "contada por modelo, ou desligue a avaliação de factualidade, que "
+            "sozinha consome quase metade dos tokens de cada pergunta."
+        )
+    if "per minute" in bruto.lower() or "(TPM)" in bruto:
+        return (
+            "limite POR MINUTO de tokens do provedor atingido." + quando +
+            " Uma pergunta com geração e avaliação gasta cerca de 7.500 tokens, "
+            "perto do teto de 8.000 por minuto do plano gratuito: espere um "
+            "pouco entre uma pergunta e outra, ou reduza o tamanho do contexto."
+        )
+    return "limite de requisições do provedor atingido." + quando
 
 
 # ── fábrica ────────────────────────────────────────────────────────────────

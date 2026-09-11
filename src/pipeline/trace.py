@@ -56,6 +56,14 @@ class Etapa:
     duracao_ms: int = 0
     detalhe: str = ""
     dados: dict[str, Any] = field(default_factory=dict)
+    # Tokens gastos nesta etapa. Só as etapas que chamam o LLM consomem;
+    # busca, rerank e contexto pai ficam em zero.
+    tokens_entrada: int = 0
+    tokens_saida: int = 0
+
+    @property
+    def tokens(self) -> int:
+        return self.tokens_entrada + self.tokens_saida
 
     @property
     def rotulo(self) -> str:
@@ -112,11 +120,17 @@ class Trace:
         return e
 
     @contextmanager
-    def medir(self, nome: str) -> Iterator[Etapa]:
+    def medir(self, nome: str, contador: Any = None) -> Iterator[Etapa]:
         """Cronometra um estágio. O corpo preenche `etapa.status` e `.detalhe`;
-        se levantar exceção, o estágio é marcado como erro e a exceção sobe."""
+        se levantar exceção, o estágio é marcado como erro e a exceção sobe.
+
+        `contador` é qualquer objeto com `total() -> (entrada, saida)`. A
+        diferença entre antes e depois vira o custo em tokens da etapa, que a
+        aba Pipeline exibe. Sem ele o campo fica zerado.
+        """
         e = Etapa(nome=nome, status=STATUS_OK)
         self.etapas.append(e)
+        antes = contador.total() if contador is not None else (0, 0)
         t0 = time.perf_counter()
         try:
             yield e
@@ -127,6 +141,14 @@ class Trace:
             raise
         finally:
             e.duracao_ms = int((time.perf_counter() - t0) * 1000)
+            if contador is not None:
+                depois = contador.total()
+                e.tokens_entrada = depois[0] - antes[0]
+                e.tokens_saida = depois[1] - antes[1]
+
+    def tokens_total(self) -> int:
+        """Tokens gastos na pergunta inteira, entrada mais saída."""
+        return sum(e.tokens for e in self.etapas)
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

@@ -442,3 +442,45 @@ def test_falha_ao_desenhar_nao_derruba_a_resposta():
     assert t.desfecho == DESFECHO_RESPONDIDA
     assert "Resolução CIF" in t.resposta
     assert "streamlit caiu" in t.etapa("geracao").dados["erro_ao_responder"]
+
+
+# ── contagem de tokens ─────────────────────────────────────────────────────
+class LLMComUso(LLMFalso):
+    """Dublê que também reporta uso, como os clientes reais fazem."""
+
+    def gerar_texto(self, prompt, **kw):
+        r = super().gerar_texto(prompt, **kw)
+        self.ultimo_uso = {"input_tokens": len(prompt) // 4, "output_tokens": len(r) // 4}
+        return r
+
+
+def test_tokens_sao_atribuidos_a_cada_etapa():
+    llm = LLMComUso()
+    t = Pipeline(llm, RecuperadorFalso(DOCS)).executar("quais condicionalidades do VAAR em 2026")
+    assert t.desfecho == DESFECHO_RESPONDIDA
+    com_llm = {"roteador", "reescrita", "metadados", "hyde", "geracao", "avaliacao"}
+    for e in t.etapas:
+        if e.nome in com_llm:
+            assert e.tokens > 0, f"{e.nome} chamou o LLM e devia ter tokens"
+        else:
+            assert e.tokens == 0, f"{e.nome} nao chama LLM e devia ficar em zero"
+    assert t.tokens_total() == sum(e.tokens for e in t.etapas)
+
+
+def test_sem_uso_reportado_os_tokens_ficam_em_zero():
+    """Provedor que não devolve `usage` não pode quebrar o pipeline."""
+    t = Pipeline(LLMFalso(), RecuperadorFalso(DOCS)).executar("condicionalidades")
+    assert t.desfecho == DESFECHO_RESPONDIDA
+    assert t.tokens_total() == 0
+
+
+@pytest.mark.parametrize("bruto,esperado", [
+    ("on tokens per day (TPD): Limit 200000. Please try again in 2m19.968s.", "DIÁRIO"),
+    ("on tokens per minute (TPM): Limit 8000. Please try again in 4.2s.", "POR MINUTO"),
+    ("some other rate limit", "limite de requisições"),
+])
+def test_mensagem_do_429_distingue_dia_de_minuto(bruto, esperado):
+    from src.pipeline.llm import _explicar_429
+    msg = _explicar_429(bruto)
+    assert esperado in msg
+    assert ".." not in msg, "o tempo de espera nao pode sair com ponto duplicado"
