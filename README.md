@@ -8,6 +8,78 @@ Projeto Integrador V.
 
 ---
 
+## Começo rápido
+
+Para quem recebeu o arquivo `.env` pronto e só quer ver o chatbot funcionando.
+São três passos.
+
+**1. Baixar o projeto**
+
+```bash
+git clone https://github.com/ProjetoIntegrador-V/rag-vaar-nacional.git
+```
+
+**2. Colocar o `.env` na pasta do projeto**
+
+Copie o arquivo `.env` que você recebeu para dentro da pasta
+`rag-vaar-nacional`, a mesma onde está o `chatbot.py`:
+
+```
+rag-vaar-nacional/
+├── .env            <- o arquivo vai AQUI
+├── chatbot.py
+├── executar.bat
+├── requirements.txt
+└── ...
+```
+
+**3. Executar**
+
+| Sistema | O que fazer |
+|---|---|
+| Windows | clique duas vezes em **`executar.bat`** |
+| Linux ou macOS | abra o terminal na pasta e rode `bash executar.sh` |
+
+O script cria o ambiente, instala as bibliotecas e abre o chatbot em
+http://localhost:8501. **Na primeira vez demora alguns minutos**, porque baixa
+cerca de 2 GB de bibliotecas; nas vezes seguintes abre em segundos.
+
+Pronto. Clique em **Testar conexões** na barra lateral: as duas faixas verdes
+confirmam que o banco e o modelo responderam. Depois é só perguntar.
+
+> Não é preciso criar conta em lugar nenhum, nem rodar notebook, nem carregar
+> documento: as chaves já estão no `.env` e os documentos já estão no banco.
+
+<details>
+<summary>Se preferir fazer à mão, sem o script</summary>
+
+```bash
+cd rag-vaar-nacional
+python -m venv .venv
+.venv\Scripts\activate        # Windows. No Linux e macOS: source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run chatbot.py
+```
+
+</details>
+
+<details>
+<summary>Se der errado</summary>
+
+| O que aparece | O que fazer |
+|---|---|
+| `[ERRO] Python nao foi encontrado` | instale o Python 3.10 ou mais novo de python.org e marque "Add Python to PATH" |
+| `[ERRO] O arquivo .env nao esta nesta pasta` | o `.env` foi para o lugar errado; ele vai na mesma pasta do `chatbot.py` |
+| o Windows salvou como `.env.txt` | renomeie para `.env`, sem extensão |
+| a resposta demora mais de 30 segundos | na barra lateral, em **Busca**, troque o **Modo** para "Só esparsa" |
+
+A seção [11. Como rodar](#11-como-rodar) tem o passo a passo detalhado e uma
+tabela de erros mais completa.
+
+</details>
+
+---
+
 ## Índice
 
 1. [O que o sistema faz](#1-o-que-o-sistema-faz)
@@ -917,17 +989,23 @@ data/
   vocabulario_esparso.json                   mapa termo -> índice (versionado)
 
 notebooks/
-  02_embeddings_qdrant.ipynb                 etapas 4 e 5
+  02_embeddings_qdrant.ipynb                 demonstração da busca
+  03_carga_qdrant.ipynb                      carga dos chunks no Qdrant
 
+executar.bat                                 Windows: prepara tudo e abre o chatbot
+executar.sh                                  Linux e macOS: o mesmo
 chatbot.py                                   interface: chat, pipeline, avaliação
+.env                                         chaves, criado por você, fora do Git
+.streamlit/config.toml                       tema base da interface
 
 src/
   embedding/qwen.py                          chamada do Qwen3, encapsulada
   esparso/bm25.py                            tokenização pt-BR
-  pipeline/
-    llm.py                                   clientes Anthropic e OpenAI-compatível
   interface/
     govbr.py                                 paleta, cabeçalho e ícones do gov.br
+    bandeira.svg                             avatar da resposta
+  pipeline/
+    llm.py                                   clientes Anthropic e OpenAI-compatível
     etapas.py                                roteador, reescrita, filtros, HyDE, geração, avaliação
     recuperacao.py                           casca sobre scripts/motor_recuperacao.py + chunk pai
     orquestrador.py                          encadeia os estágios e produz o Trace
