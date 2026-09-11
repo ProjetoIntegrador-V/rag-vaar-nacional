@@ -20,6 +20,7 @@ Projeto Integrador V.
 8. [Etapa 5: recuperação e fusão](#8-etapa-5-recuperação-e-fusão)
 9. [Etapa 6: geração](#9-etapa-6-geração)
 10. [Etapa 7: avaliação](#10-etapa-7-avaliação)
+    [Chatbot](#chatbot)
 11. [Como rodar](#11-como-rodar)
 12. [Estrutura do repositório](#12-estrutura-do-repositório)
 13. [Pendências conhecidas](#13-pendências-conhecidas)
@@ -42,25 +43,24 @@ portarias interministeriais e notas técnicas do Inep e da SEB.
 Pergunta
    |
    v
-[6a] Filtro de intenção ......... fora de escopo? o pipeline para aqui
+ 1  Filtro de intenção ......... fora de escopo? PARA AQUI, o banco nem é consultado
+ 2  Reescrita .................. vocabulário leigo -> jargão normativo
+ 3  Extração de filtros ........ ano e tipo de documento -> filtro do Qdrant
+ 4  HyDE ....................... LLM escreve um parágrafo hipotético
    |
    v
-[6b] HyDE ....................... LLM escreve um documento hipotético
+ 5  Busca híbrida no Qdrant .... denso (HyDE, Qwen3) + esparso (pergunta), RRF nativo
+                                 nada relevante? PARA AQUI, antes do LLM final
+ 6  Reranking .................. cross-encoder reordena 20 -> 5 (opcional)
+ 7  Chunk pai .................. sub-chunk -> página inteira de origem
    |
    v
-[4]  Embedding da consulta ...... Qwen3-Embedding-0.6B (denso)
-     Tokenização da consulta .... pt-BR (esparso)
-   |
-   v
-[5]  Busca no Qdrant ............ denso + esparso em paralelo
-     Fusão por RRF .............. nativa do banco
-   |
-   v
-[6c] Geração ancorada ........... resposta com citação da fonte
-   |
-   v
-[7]  Avaliação .................. score de factualidade
+ 8  Geração ancorada ........... resposta com citação da fonte
+ 9  Avaliação .................. nota de factualidade; não bloqueia a resposta
 ```
+
+Os estágios 1 a 4 acontecem **antes do banco vetorial**. A aba Pipeline do
+chatbot mostra, para cada pergunta, até onde ela chegou.
 
 | Etapa | O que faz | Onde está | Estado |
 |---|---|---|---|
@@ -68,9 +68,10 @@ Pergunta
 | 2. Extração | PDF e HTML para JSON | `data/fonte/fundeb_vaar_atualizado.json` | pronto, 1 falha |
 | 3. Chunking | Segmenta em ~600 tokens | `scripts/chunking.py` | pronto |
 | 4. Embedding e indexação | Vetoriza e sobe ao Qdrant | `notebooks/02_embeddings_qdrant.ipynb` | pronto |
-| 5. Recuperação | Busca híbrida com RRF | mesmo notebook, função `buscar()` | pronto |
-| 6. Geração | Roteamento, HyDE e resposta | `scripts/geracao_*.py` | esqueleto |
-| 7. Avaliação | Factualidade | `scripts/avaliacao_metricas.py` | esqueleto |
+| 5. Recuperação | Busca híbrida, reranking, chunk pai | `src/pipeline/recuperacao.py` | pronto |
+| 6. Geração | Roteamento, reescrita, HyDE, resposta | `src/pipeline/etapas.py` + `scripts/` | pronto |
+| 7. Avaliação | Factualidade por LLM | `src/pipeline/etapas.py` | pronto |
+| Interface | Chatbot com rastro do pipeline | `chatbot.py` | pronto |
 
 ---
 
@@ -442,6 +443,66 @@ conjunto de perguntas anotadas que ainda não existe.
 
 ---
 
+## Chatbot
+
+`chatbot.py` é a interface do sistema. Três abas:
+
+| Aba | O que mostra |
+|---|---|
+| **Chat** | pergunta, resposta e as fontes citadas, com página e tipo de norma |
+| **Pipeline** | por onde **cada pergunta** passou: os nove estágios, quanto tempo levou em cada um e, se parou, em qual e por quê |
+| **Avaliação** | desfechos agregados e a média de factualidade |
+
+A aba Pipeline responde a pergunta que importa para depuração: **a pergunta
+chegou ao banco vetorial? Chegou ao LLM de geração?** Cada trace tem um de
+quatro desfechos:
+
+| Desfecho | Onde parou |
+|---|---|
+| Respondida | passou por tudo |
+| Barrada antes do banco | o roteador de intenção reprovou; o Qdrant nem foi consultado |
+| Sem contexto | chegou ao banco, nada relevante voltou; parou antes do LLM de geração |
+| Erro | exceção em algum estágio, com a mensagem |
+
+### Os nove estágios
+
+```
+pergunta
+  1 roteador      classificador binário: é Fundeb/VAAR? senão, PARA AQUI
+  2 reescrita     vocabulário leigo -> jargão normativo
+  3 metadados     extrai ano e tipo de documento -> filtro do Qdrant
+  4 hyde          LLM escreve um parágrafo hipotético; é ELE que vira vetor denso
+  5 busca         híbrida no Qdrant: denso (HyDE) + esparso (pergunta), RRF nativo
+                  se vier vazio, PARA AQUI
+  6 rerank        cross-encoder reordena os 20 candidatos, ficam 5
+  7 contexto_pai  sub-chunk -> página inteira de origem (small-to-big)
+  8 geracao       resposta ancorada, com citação obrigatória
+  9 avaliacao     juiz por LLM dá nota de factualidade; não bloqueia a resposta
+```
+
+Os estágios 1, 4, 8 e 9 reutilizam os scripts da equipe em `scripts/`. Os
+estágios 2, 3, 6 e 7 vinham da arquitetura alvo e foram implementados em
+`src/pipeline/`. Cada um pode ser ligado ou desligado na barra lateral, e um
+estágio desligado aparece na aba Pipeline como "pulado", não some.
+
+### Duas decisões que não são óbvias
+
+**O lado esparso não recebe o HyDE.** O documento hipotético vai só para o
+vetor denso. O esparso recebe a pergunta original mais a reescrita, porque as
+âncoras exatas ("art. 14", "Portaria 14/2025") estão na pergunta do usuário,
+não num parágrafo inventado pelo modelo.
+
+**O reranker vem desligado por padrão.** O `bge-reranker-v2-m3` pesa 2,2 GB e
+é lento em CPU. Ligue na barra lateral quando houver GPU ou quando a precisão
+da ordenação importar mais que a latência.
+
+### Credenciais
+
+Os campos da barra lateral ficam só na sessão. Se `QDRANT_URL`,
+`QDRANT_API_KEY` e `ANTHROPIC_API_KEY` existirem no `.env` ou no ambiente, os
+campos já vêm preenchidos. O botão **Testar conexões** valida as duas antes da
+primeira pergunta.
+
 ## 11. Como rodar
 
 ```bash
@@ -475,11 +536,20 @@ cria a coleção, sobe os 422 chunks úteis e valida a busca.
 Para rodar sem conta e sem rede, troque `MODO_QDRANT` para `"local"` na célula de
 configuração. O resto do notebook é idêntico.
 
+### Chatbot
+
+```bash
+streamlit run chatbot.py
+```
+
+Na primeira pergunta ele carrega o Qwen3-Embedding-0.6B. Com o reranker
+ligado, carrega também o `bge-reranker-v2-m3`.
+
 ### Demonstração e testes
 
 ```bash
 python scripts/demo_componentes.py    # denso e lexical lado a lado, sem baixar modelo
-pytest -q                             # 13 testes
+pytest -q                             # 29 testes; os do pipeline usam LLM e Qdrant falsos
 ```
 
 ---
@@ -495,9 +565,17 @@ data/
 notebooks/
   02_embeddings_qdrant.ipynb                 etapas 4 e 5
 
+chatbot.py                                   interface: chat, pipeline, avaliação
+
 src/
   embedding/qwen.py                          chamada do Qwen3, encapsulada
   esparso/bm25.py                            tokenização pt-BR
+  pipeline/
+    llm.py                                   cliente Anthropic com gerar_texto()
+    etapas.py                                roteador, reescrita, filtros, HyDE, geração, avaliação
+    recuperacao.py                           Qdrant híbrido, reranker, chunk pai
+    orquestrador.py                          encadeia os estágios e produz o Trace
+    trace.py                                 registro de por onde a pergunta passou
 
 scripts/
   chunking.py                                etapa 3
@@ -544,13 +622,13 @@ nenhum**.
    anotado, para medir Recall@5 e MRR. Sem isso, ajustar `top_k` ou o peso entre
    denso e esparso é chute.
 
-3. **Sem reranking.** A arquitetura desenhada em `docs/arquitetura-alvo.md`
-   prevê um cross-encoder reordenando os 20 primeiros resultados antes de enviar
-   os 5 melhores ao LLM. Não foi implementado.
+3. **"Chunk pai" é a página, não o artigo.** A recuperação hierárquica devolve
+   a página de origem do sub-chunk, porque é a unidade que o chunking produziu.
+   Devolver o artigo inteiro exigiria detectar a estrutura Capítulo > Artigo >
+   Inciso na extração, o que ainda não existe.
 
-4. **Sem recuperação hierárquica.** A mesma arquitetura prevê indexar em chunks
-   pequenos e devolver o artigo inteiro ao LLM. Hoje o chunk recuperado é o chunk
-   enviado.
+4. **Sem vigência.** A arquitetura alvo prevê filtrar normas revogadas. O corpus
+   não tem esse metadado, então o filtro não existe.
 
 5. **16 chunks eram cabeçalho e rodapé** de página, com 1 a 26 tokens, coisas como
    "MINISTÉRIO DA EDUCAÇÃO" e "ANEXO". O notebook descarta na carga, mas a origem
@@ -559,8 +637,8 @@ nenhum**.
 
 6. **Chunks longos demais.** O maior tem 2.399 tokens, contra a meta de 600.
 
-7. **Os scripts de geração são esqueletos.** Recebem `cliente_llm` como parâmetro,
-   mas nenhum cliente está implementado, e não há tratamento de erro.
+7. **Sem cache de embedding da consulta.** Cada pergunta vetoriza o HyDE do
+   zero. Para demonstração está bom; em uso contínuo vale cachear.
 
 ---
 
