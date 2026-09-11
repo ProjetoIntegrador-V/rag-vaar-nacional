@@ -1,14 +1,27 @@
-# ── Embedding denso: Qwen3-Embedding-0.6B via HuggingFace ─────────────────
+# ─────────────────────────────────────────────────────────────────────────
+# RAG VAAR Nacional
+# ─────────────────────────────────────────────────────────────────────────
+
+# ── Extracao e chunking (etapas 2 e 3) ───────────────────────────────────
+PyMuPDF>=1.24.0
+tiktoken>=0.7.0
+
+# ── Embedding denso: Qwen3-Embedding-0.6B (etapa 4) ──────────────────────
 sentence-transformers>=3.0.0
 transformers>=4.51.0           # versao minima com suporte a arquitetura Qwen3
 torch>=2.1.0
 numpy>=1.24.0
 
-# ── Retriever lexical ─────────────────────────────────────────────────────
-rank-bm25>=0.2.2               # BM25 Okapi em memoria
+# ── Banco vetorial e busca hibrida (etapas 4 e 5) ────────────────────────
+qdrant-client>=1.12.0
 
-# ── Suporte ───────────────────────────────────────────────────────────────
+# ── Retriever lexical de referencia (src/esparso) ────────────────────────
+# Usado pelo demo e pelos testes. Na producao o BM25 fica no Qdrant, via
+# Modifier.IDF, e este modulo entra so com o tokenizador pt-BR.
+rank-bm25>=0.2.2
+
+# ── Suporte ──────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0
 
-# ── Testes ────────────────────────────────────────────────────────────────
+# ── Testes ───────────────────────────────────────────────────────────────
 pytest>=8.0.0
