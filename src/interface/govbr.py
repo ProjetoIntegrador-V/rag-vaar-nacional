@@ -14,6 +14,8 @@ Referência dos tokens: https://www.gov.br/ds/
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
 # ── tokens ────────────────────────────────────────────────────────────────
@@ -29,6 +31,10 @@ CINZA_TEXTO = "#555555"
 
 # Ícones do Material Symbols, que o Streamlit resolve em rótulos de aba.
 # Escolhidos pelo que cada aba faz, não pelo que ela mostra:
+# Avatar da resposta. Arquivo em vez do emoji 🇧🇷: no Windows os indicadores
+# regionais não têm desenho na fonte do sistema e o emoji aparece como "BR".
+AVATAR_RESPOSTA = str(Path(__file__).resolve().parent / "bandeira.svg")
+
 ICONE_CHAT = ":material/chat:"            # balão de conversa
 ICONE_PIPELINE = ":material/psychology:"  # cabeça com engrenagens
 ICONE_AVALIACAO = ":material/fact_check:"  # documento conferido
@@ -125,10 +131,52 @@ html, body, [data-testid="stAppViewContainer"] {{
 .stButton > button:hover {{ background: var(--govbr-azul-medio); color: #FFFFFF; }}
 [data-testid="stChatInput"] {{ border: 1px solid var(--govbr-azul); border-radius: 8px; }}
 
+/* ── conversa ────────────────────────────────────────────────────────── */
+/* A pergunta é um balão próprio alinhado à direita. Não dá para alinhar o
+   st.chat_message do Streamlit sem depender da estrutura interna dele, que
+   muda de versão para versão. */
+.govbr-pergunta {{
+  margin: .4rem 0 .4rem auto;
+  max-width: 78%;
+  width: fit-content;
+  background: #E8F0FB;
+  border: 1px solid #C5D8F5;
+  color: var(--govbr-azul-escuro);
+  border-radius: 14px 14px 3px 14px;
+  padding: .6rem .95rem;
+  font-size: .95rem;
+  line-height: 1.45;
+}}
+
+/* O campo de pergunta gruda no rodapé enquanto a conversa rola por cima.
+   `sticky` em vez de `fixed` porque acompanha a largura da coluna sozinho,
+   sem precisar descontar a barra lateral. Dentro da aba, ele some junto com
+   ela quando o usuário troca de aba. */
+[data-testid="stElementContainer"]:has([data-testid="stChatInput"]) {{
+  position: sticky;
+  bottom: .6rem;
+  z-index: 20;
+  padding-top: 1.2rem;
+  background: linear-gradient(to bottom, rgba(248,248,248,0) 0%, {CINZA_FUNDO} 35%);
+}}
+
+/* Sem conversa, este bloco empurra o campo para o meio da tela; assim que a
+   primeira pergunta entra, ele deixa de ser desenhado e o campo desce. */
+.govbr-abertura {{
+  min-height: 30vh;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  align-items: center; text-align: center; gap: .35rem;
+  color: {CINZA_TEXTO};
+}}
+.govbr-abertura .govbr-convite {{
+  font-size: 1.35rem; font-weight: 700; color: var(--govbr-azul-escuro);
+}}
+
 /* ── blocos de conteúdo ──────────────────────────────────────────────── */
 [data-testid="stChatMessage"] {{
   background: #FFFFFF; border: 1px solid var(--govbr-cinza-borda);
-  border-radius: 8px; padding: .8rem 1rem;
+  border-radius: 3px 14px 14px 14px; padding: .8rem 1rem;
+  max-width: 92%; margin-right: auto;
 }}
 [data-testid="stMetric"] {{
   background: #FFFFFF; border: 1px solid var(--govbr-cinza-borda);

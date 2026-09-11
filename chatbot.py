@@ -14,6 +14,7 @@ disco. Se existirem no .env ou no ambiente, os campos já vêm preenchidos.
 """
 from __future__ import annotations
 
+import html
 import os
 import sys
 from pathlib import Path
@@ -51,6 +52,7 @@ from src.pipeline import (  # noqa: E402
 )
 from src.embedding.qwen import DEFAULT_TASK  # noqa: E402
 from src.interface import (  # noqa: E402
+    AVATAR_RESPOSTA,
     ICONE_AVALIACAO,
     ICONE_CHAT,
     ICONE_PIPELINE,
@@ -224,6 +226,13 @@ aba_chat, aba_pipe, aba_aval = st.tabs([
 
 
 # ── chat ────────────────────────────────────────────────────────────────────
+def _pergunta_na_direita(texto: str) -> None:
+    """Balão da pergunta, alinhado à direita. O texto é escapado porque vem
+    digitado pelo usuário e vai para dentro de HTML."""
+    st.markdown(f'<div class="govbr-pergunta">{html.escape(texto)}</div>',
+                unsafe_allow_html=True)
+
+
 def _legenda(tr: Trace) -> str:
     """Linha de status sob a resposta: desfecho, factualidade e tempo."""
     rot, cor = ROTULO_DESFECHO.get(tr.desfecho, ("?", "gray"))
@@ -247,19 +256,39 @@ with aba_chat:
         st.info("Preencha o endpoint e a API key do Qdrant e escolha o provedor de LLM na barra lateral.")
 
     for m in ss.mensagens:
-        with st.chat_message(m["role"]):
+        if m["role"] == "user":
+            _pergunta_na_direita(m["content"])
+            continue
+        with st.chat_message("assistant", avatar=AVATAR_RESPOSTA):
             st.markdown(m["content"])
-            if m["role"] == "assistant" and m.get("trace_idx") is not None:
+            if m.get("trace_idx") is not None:
                 tr = ss.traces[m["trace_idx"]]
                 st.caption(_legenda(tr))
                 _render_fontes(tr)
 
+    # Enquanto não há conversa, este bloco empurra o campo para o meio da tela.
+    # Fica num placeholder porque a primeira pergunta só é conhecida depois do
+    # st.chat_input, lá embaixo: aí ele é esvaziado na mesma passada.
+    abertura = st.empty()
+    if not ss.mensagens:
+        abertura.markdown(
+            '<div class="govbr-abertura">'
+            '<span class="govbr-convite">O que você quer saber sobre o VAAR?</span>'
+            '<span>Pergunte em linguagem comum. A resposta cita a norma de onde veio.</span>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    # A troca ao vivo é desenhada AQUI, antes do campo, para que a ordem na
+    # tela continue sendo conversa -> campo mesmo antes do próximo rerun.
+    ao_vivo = st.container()
     pergunta = st.chat_input("Pergunte sobre o Fundeb ou o VAAR", disabled=not credenciais_ok)
     if pergunta:
+        abertura.empty()
         ss.mensagens.append({"role": "user", "content": pergunta})
-        with st.chat_message("user"):
-            st.markdown(pergunta)
-        with st.chat_message("assistant"):
+        with ao_vivo:
+            _pergunta_na_direita(pergunta)
+        with ao_vivo, st.chat_message("assistant", avatar=AVATAR_RESPOSTA):
             espera = st.empty()
             corpo = st.container()
             status = st.empty()

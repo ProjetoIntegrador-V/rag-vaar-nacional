@@ -538,6 +538,31 @@ As abas usam Material Symbols, que o Streamlit resolve no rótulo:
 `:material/chat:` para o Chat, `:material/psychology:` para o Pipeline e
 `:material/fact_check:` para a Avaliação.
 
+### A conversa
+
+A pergunta fica à direita, num balão azul claro; a resposta fica à esquerda,
+com a bandeira do Brasil no avatar. O balão da pergunta é HTML próprio, com o
+texto escapado, e não `st.chat_message`: alinhar o componente do Streamlit
+dependeria da estrutura interna dele, que muda de versão para versão.
+
+O avatar é o arquivo `src/interface/bandeira.svg`, não o emoji 🇧🇷. No Windows
+os indicadores regionais não têm desenho na fonte do sistema e o emoji aparece
+como as letras "BR".
+
+O campo de pergunta segue o padrão do ChatGPT: enquanto não há conversa ele
+fica no meio da tela, sob um convite; depois da primeira pergunta ele desce e
+gruda no rodapé enquanto a conversa rola por cima. São duas peças:
+
+- um bloco de abertura de `30vh` que empurra o campo para o meio. Ele vive num
+  `st.empty()` porque a primeira pergunta só é conhecida depois do
+  `st.chat_input`, lá embaixo: aí o placeholder é esvaziado na mesma passada;
+- `position: sticky` no contêiner do campo, em vez de `fixed`. Sticky
+  acompanha a largura da coluna sozinho, sem descontar a barra lateral na
+  mão, e some junto com a aba quando o usuário troca de aba.
+
+A troca ao vivo é desenhada num `st.container()` criado **antes** do campo,
+senão a resposta nova apareceria abaixo dele até o próximo rerun.
+
 ### Duas decisões que não são óbvias
 
 **O lado esparso não recebe o HyDE.** O documento hipotético vai só para o
