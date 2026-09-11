@@ -24,6 +24,7 @@ Projeto Integrador V.
 11. [Como rodar](#11-como-rodar) **(instalação passo a passo, `.env` e chaves)**
 12. [Estrutura do repositório](#12-estrutura-do-repositório)
 13. [Pendências conhecidas](#13-pendências-conhecidas)
+14. [Publicar o chatbot na internet](#14-publicar-o-chatbot-na-internet) **(limites de memória, Secrets)**
 
 ---
 
@@ -996,6 +997,137 @@ nenhum**.
    zero. Para demonstração está bom; em uso contínuo vale cachear.
 
 ---
+
+---
+
+## 14. Publicar o chatbot na internet
+
+Dá para publicar, mas o modelo de embedding é o que decide onde. Esta seção
+traz os números medidos e o que fazer com eles.
+
+### 14.1 Quanta memória o chatbot consome
+
+Medido nesta máquina, com `psutil`, subindo um pedaço de cada vez:
+
+| Configuração | RAM |
+|---|---|
+| Python vazio | 14 MB |
+| + Streamlit | 46 MB |
+| + qdrant-client | 93 MB |
+| + vocabulário esparso (87.581 termos) | **103 MB** |
+| + PyTorch | 256 MB |
+| + Qwen3-Embedding-0.6B carregado | **1.717 MB** |
+| + uma consulta vetorizada | 1.729 MB |
+
+Os dois números que importam:
+
+- **modo esparso: 103 MB.** Não carrega PyTorch nem o Qwen;
+- **modo híbrido ou denso: cerca de 1,7 GB.** O Qwen tem 596 milhões de
+  parâmetros em bfloat16, e são eles que ocupam a maior parte.
+
+O reranker `bge-reranker-v2-m3`, se ligado, soma outros 2,2 GB.
+
+### 14.2 Streamlit Community Cloud
+
+O limite oficial é **690 MB no mínimo e 2,7 GB no máximo** de memória por
+aplicativo ([documentação][limites]). Comparando com a tabela acima:
+
+| Modo | Cabe? | Observação |
+|---|---|---|
+| Só esparsa | **sim, com folga** | 103 MB contra 2,7 GB |
+| Híbrida ou densa | **no limite** | 1,7 GB do modelo mais o servidor; sobra pouco |
+| Com reranker ligado | **não** | passa de 3,9 GB |
+
+O modo híbrido cabe na conta, mas sem margem para imprevisto: qualquer pico
+derruba o aplicativo com a mensagem "🤯 This app has gone over its resource
+limits". Há ainda três incômodos, nenhum deles impeditivo:
+
+1. **sem GPU.** Vetorizar a consulta continua custando 64 ms por token, e a
+   CPU do Community Cloud costuma ser mais lenta que a de um notebook;
+2. **o modelo é baixado a cada partida.** São 1,2 GB do HuggingFace. Os
+   aplicativos hibernam depois de 12 horas sem visita, então a primeira
+   pergunta depois de uma noite parada espera esse download;
+3. **PyTorch no Linux.** O pacote padrão do PyPI vem com as bibliotecas CUDA
+   junto, que não servem para nada sem GPU. Para instalar a versão só de CPU,
+   acrescente no topo do `requirements.txt`:
+
+   ```
+   --extra-index-url https://download.pytorch.org/whl/cpu
+   ```
+
+**Recomendação:** se for publicar no Community Cloud, publique em modo
+esparso. Basta colocar `MODO_BUSCA_PADRAO = "esparsa"` nos Secrets: o
+aplicativo abre nesse modo e nunca carrega o Qwen. A busca lexical responde em
+cerca de 50 ms e acha bem o que tem âncora exata ("art. 14", "Portaria 14"); o
+que se perde é a busca semântica, que é justamente o que salva a pergunta
+feita em linguagem de leigo.
+
+### 14.3 Hugging Face Spaces, para rodar o modo híbrido
+
+O plano gratuito de CPU do Spaces oferece **2 vCPU e 16 GB de RAM**, quase seis
+vezes o teto do Community Cloud. O modo híbrido roda lá sem aperto, com o
+mesmo código: Spaces tem um SDK Streamlit nativo, lê `requirements.txt` do
+mesmo jeito e guarda as chaves em Settings > Variables and secrets, que chegam
+ao processo como variáveis de ambiente, exatamente o que a função `segredo()`
+do `chatbot.py` já lê.
+
+Continua sendo CPU, então a busca híbrida segue na casa dos segundos.
+
+### 14.4 Onde colocar as chaves em cada lugar
+
+O `chatbot.py` lê as credenciais pela função `segredo()`, que procura primeiro
+em `st.secrets` e depois nas variáveis de ambiente. Assim o mesmo código serve
+aos três cenários:
+
+| Onde roda | Onde colocar as chaves |
+|---|---|
+| Sua máquina | arquivo `.env` na raiz (seção 11.4) |
+| Streamlit Community Cloud | Settings > Secrets, no formato TOML |
+| Hugging Face Spaces | Settings > Variables and secrets |
+
+No Community Cloud, o conteúdo dos Secrets é este, com aspas porque é TOML:
+
+```toml
+QDRANT_URL = "https://SEU-CLUSTER.sa-east-1-0.aws.cloud.qdrant.io"
+QDRANT_API_KEY = "COLE-AQUI-A-CHAVE-DO-QDRANT"
+LLM_PROVEDOR = "groq"
+LLM_API_KEY = "COLE-AQUI-A-CHAVE-DO-PROVEDOR"
+LLM_MODELO = "openai/gpt-oss-120b"
+MODO_BUSCA_PADRAO = "esparsa"
+```
+
+Repare na diferença: no `.env` é `CHAVE=valor` sem aspas; nos Secrets é
+`CHAVE = "valor"` com aspas, porque é TOML. **Não comite o `secrets.toml`**,
+pelo mesmo motivo de sempre.
+
+### 14.5 Passo a passo no Community Cloud
+
+1. O repositório já está público em
+   `github.com/ProjetoIntegrador-V/rag-vaar-nacional`, que é o que o
+   Community Cloud exige.
+2. Entre em https://share.streamlit.io com a conta do GitHub.
+3. **Create app** > **Deploy a public app from GitHub**.
+4. Preencha: repositório `ProjetoIntegrador-V/rag-vaar-nacional`, branch
+   `main`, arquivo principal `chatbot.py`.
+5. Em **Advanced settings**, escolha Python 3.11 ou mais novo e cole o bloco
+   TOML da seção 14.4 no campo **Secrets**.
+6. **Deploy**. A primeira construção demora vários minutos, quase tudo
+   instalando PyTorch.
+
+A coleção `vaar_rag` precisa já existir no Qdrant (seção 11.6). O aplicativo
+publicado só consulta o banco; ele não carrega documento nenhum.
+
+### 14.6 Resumo
+
+| Pergunta | Resposta |
+|---|---|
+| Dá para subir no Streamlit Community Cloud? | Sim |
+| Roda normalmente? | Em modo esparso, sim, com folga |
+| O Qwen na pergunta é impedimento? | É o único. São 1,7 GB contra um teto de 2,7 GB: cabe, mas sem margem |
+| Tem alternativa gratuita para o modo híbrido? | Hugging Face Spaces, com 16 GB de RAM no plano de CPU |
+| Precisa mudar o código? | Não. As chaves já são lidas de `st.secrets` ou do ambiente |
+
+[limites]: https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app#resource-limits
 
 ## Base legal do corpus
 

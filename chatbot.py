@@ -67,6 +67,22 @@ cabecalho("RAG ", "VAAR Nacional",
           "Assistente sobre a legislação do Fundeb e da complementação VAAR, "
           "com respostas ancoradas em normas oficiais.")
 
+def segredo(nome: str, padrao: str = "") -> str:
+    """Lê uma credencial de onde ela estiver.
+
+    Na máquina local ela vem do `.env` ou do ambiente. Na Streamlit Community
+    Cloud não existe `.env`: as chaves entram em Settings > Secrets e chegam
+    por `st.secrets`. Acessar `st.secrets` sem nenhum secrets.toml configurado
+    levanta exceção, daí o try.
+    """
+    try:
+        if nome in st.secrets:
+            return str(st.secrets[nome])
+    except Exception:  # noqa: BLE001
+        pass
+    return os.getenv(nome, padrao)
+
+
 CAMINHO_VOCAB = RAIZ / "data" / "vocabulario_esparso.json"
 CAMINHO_CHUNKS = RAIZ / "data" / "chunks" / "chunks_fatec_rag.jsonl"
 
@@ -114,30 +130,30 @@ with st.sidebar:
     st.markdown("### Configuração")
 
     st.subheader("Banco vetorial (Qdrant)")
-    qdrant_url = st.text_input("Endpoint do cluster", value=os.getenv("QDRANT_URL", ""),
+    qdrant_url = st.text_input("Endpoint do cluster", value=segredo("QDRANT_URL"),
                                placeholder="https://....cloud.qdrant.io")
     qdrant_key = st.text_input("API key do Qdrant", type="password",
-                               value=os.getenv("QDRANT_API_KEY", ""))
+                               value=segredo("QDRANT_API_KEY"))
     colecao = st.text_input("Coleção", value="vaar_rag")
 
     st.subheader("LLM")
     # Padrão: LLM_PROVEDOR do .env; senão Anthropic se houver chave dela;
     # senão Groq, que tem plano gratuito e basta para o projeto.
-    _padrao = os.getenv("LLM_PROVEDOR") or ("anthropic" if os.getenv("ANTHROPIC_API_KEY") else "groq")
+    _padrao = segredo("LLM_PROVEDOR") or ("anthropic" if segredo("ANTHROPIC_API_KEY") else "groq")
     _ordem = list(PROVEDORES)
     provedor = st.selectbox("Provedor", _ordem,
                             index=_ordem.index(_padrao) if _padrao in _ordem else 0,
                             format_func=lambda p: PROVEDORES[p]["rotulo"])
     _info = PROVEDORES[provedor]
-    _chave_env = os.getenv("ANTHROPIC_API_KEY", "") if provedor == "anthropic" else os.getenv("LLM_API_KEY", "")
+    _chave_env = segredo("ANTHROPIC_API_KEY") if provedor == "anthropic" else segredo("LLM_API_KEY")
     llm_key = st.text_input("API key" + ("" if _info["precisa_chave"] else " (não usada)"),
                             type="password", value=_chave_env, key=f"key_{provedor}",
                             disabled=not _info["precisa_chave"])
-    llm_modelo = st.text_input("Modelo", value=os.getenv("LLM_MODELO") or _info["modelo_sugerido"],
+    llm_modelo = st.text_input("Modelo", value=segredo("LLM_MODELO") or _info["modelo_sugerido"],
                                key=f"modelo_{provedor}")
     llm_base_url = _info["base_url"]
     if provedor == "outro":
-        llm_base_url = st.text_input("base_url", value=os.getenv("LLM_BASE_URL", ""),
+        llm_base_url = st.text_input("base_url", value=segredo("LLM_BASE_URL"),
                                      placeholder="https://.../v1")
     st.caption(_info["dica"])
 
@@ -162,8 +178,12 @@ with st.sidebar:
     # Medido nesta máquina: o Qdrant devolve a busca híbrida em 17 ms; o Qwen
     # gasta 64 ms por token para vetorizar a consulta. Quem não tem GPU pode
     # trocar a busca semântica por BM25 puro e responder na hora.
+    # Num servidor pequeno, MODO_BUSCA_PADRAO=esparsa evita carregar o Qwen,
+    # que sozinho ocupa 1,7 GB de RAM. Ver a seção de deploy no README.
     _modos = list(MODOS_BUSCA)
-    modo_busca = st.selectbox("Modo", _modos, format_func=lambda m: MODOS_BUSCA[m])
+    _modo_inicial = segredo("MODO_BUSCA_PADRAO", "hibrida")
+    modo_busca = st.selectbox("Modo", _modos, format_func=lambda m: MODOS_BUSCA[m],
+                              index=_modos.index(_modo_inicial) if _modo_inicial in _modos else 0)
     if modo_busca == "esparsa":
         st.caption("Não carrega o Qwen: responde em milissegundos, mas só acha "
                    "o que casa por palavra.")
