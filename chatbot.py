@@ -36,10 +36,9 @@ from src.pipeline import (  # noqa: E402
     DESFECHO_RESPONDIDA,
     DESFECHO_SEM_CONTEXTO,
     ESTAGIOS,
-    MODELOS,
     NO_BANCO,
+    PROVEDORES,
     ArmazemPais,
-    ClienteAnthropic,
     ConfigPipeline,
     Pipeline,
     Recuperador,
@@ -47,6 +46,7 @@ from src.pipeline import (  # noqa: E402
     carregar_embedder,
     carregar_reranker,
     carregar_vocabulario,
+    criar_cliente,
 )
 from src.embedding.qwen import DEFAULT_TASK  # noqa: E402
 
@@ -104,15 +104,31 @@ with st.sidebar:
                                value=os.getenv("QDRANT_API_KEY", ""))
     colecao = st.text_input("Coleção", value="vaar_rag")
 
-    st.subheader("LLM (Anthropic)")
-    anthropic_key = st.text_input("API key da Anthropic", type="password",
-                                  value=os.getenv("ANTHROPIC_API_KEY", ""))
-    modelo = st.selectbox("Modelo", list(MODELOS), format_func=lambda m: MODELOS[m])
+    st.subheader("LLM")
+    # Padrão: LLM_PROVEDOR do .env; senão Anthropic se houver chave dela;
+    # senão Groq, que tem plano gratuito e basta para o projeto.
+    _padrao = os.getenv("LLM_PROVEDOR") or ("anthropic" if os.getenv("ANTHROPIC_API_KEY") else "groq")
+    _ordem = list(PROVEDORES)
+    provedor = st.selectbox("Provedor", _ordem,
+                            index=_ordem.index(_padrao) if _padrao in _ordem else 0,
+                            format_func=lambda p: PROVEDORES[p]["rotulo"])
+    _info = PROVEDORES[provedor]
+    _chave_env = os.getenv("ANTHROPIC_API_KEY", "") if provedor == "anthropic" else os.getenv("LLM_API_KEY", "")
+    llm_key = st.text_input("API key" + ("" if _info["precisa_chave"] else " (não usada)"),
+                            type="password", value=_chave_env, key=f"key_{provedor}",
+                            disabled=not _info["precisa_chave"])
+    llm_modelo = st.text_input("Modelo", value=os.getenv("LLM_MODELO") or _info["modelo_sugerido"],
+                               key=f"modelo_{provedor}")
+    llm_base_url = _info["base_url"]
+    if provedor == "outro":
+        llm_base_url = st.text_input("base_url", value=os.getenv("LLM_BASE_URL", ""),
+                                     placeholder="https://.../v1")
+    st.caption(_info["dica"])
 
     if st.button("Testar conexões", use_container_width=True):
         with st.spinner("testando..."):
             try:
-                ss.conexao_llm = ClienteAnthropic(anthropic_key, modelo).testar_conexao()
+                ss.conexao_llm = criar_cliente(provedor, llm_key, llm_modelo, llm_base_url).testar_conexao()
             except Exception as exc:  # noqa: BLE001
                 ss.conexao_llm = (False, str(exc))
             try:
@@ -142,11 +158,12 @@ with st.sidebar:
         ss.mensagens, ss.traces = [], []
         st.rerun()
 
-credenciais_ok = bool(qdrant_url and qdrant_key and anthropic_key)
+credenciais_ok = bool(qdrant_url and qdrant_key and llm_modelo
+                      and (llm_key or not PROVEDORES[provedor]["precisa_chave"]))
 
 
 def montar_pipeline() -> Pipeline:
-    llm = ClienteAnthropic(anthropic_key, modelo)
+    llm = criar_cliente(provedor, llm_key, llm_modelo, llm_base_url)
     rec = Recuperador(
         qdrant_url=qdrant_url, qdrant_api_key=qdrant_key, colecao=colecao,
         embedder=_embedder(), vocabulario=_vocabulario(),
@@ -180,7 +197,7 @@ def _render_fontes(trace: Trace) -> None:
 
 with aba_chat:
     if not credenciais_ok:
-        st.info("Preencha o endpoint e a API key do Qdrant e a API key da Anthropic na barra lateral.")
+        st.info("Preencha o endpoint e a API key do Qdrant e escolha o provedor de LLM na barra lateral.")
 
     for m in ss.mensagens:
         with st.chat_message(m["role"]):

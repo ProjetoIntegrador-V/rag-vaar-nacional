@@ -201,3 +201,38 @@ def test_recuperador_recusa_credencial_vazia(url, chave, trecho):
     with pytest.raises(ValueError, match=trecho):
         Recuperador(qdrant_url=url, qdrant_api_key=chave, colecao="c",
                     embedder=None, vocabulario={})
+
+
+# ── clientes de LLM ────────────────────────────────────────────────────────
+def test_criar_cliente_rejeita_provedor_desconhecido():
+    from src.pipeline import criar_cliente
+    with pytest.raises(ValueError, match="desconhecido"):
+        criar_cliente("provedor-x", "k", "m")
+
+
+@pytest.mark.parametrize("provedor,chave,modelo,url,trecho", [
+    ("anthropic", "", "claude-opus-5", None, "Anthropic"),
+    ("groq", "", "llama-3.3-70b-versatile", None, "API key"),
+    ("outro", "k", "m", "", "base_url"),
+    ("groq", "k", "", None, "modelo"),
+])
+def test_criar_cliente_guardas(provedor, chave, modelo, url, trecho):
+    from src.pipeline import criar_cliente
+    with pytest.raises(ValueError, match=trecho):
+        criar_cliente(provedor, chave, modelo, url)
+
+
+def test_ollama_nao_exige_chave():
+    from src.pipeline import ClienteOpenAICompativel, criar_cliente
+    c = criar_cliente("ollama", "", "llama3.1")
+    assert isinstance(c, ClienteOpenAICompativel)
+    assert c.base_url.startswith("http://localhost:11434")
+
+
+def test_catalogo_de_provedores_consistente():
+    from src.pipeline import PROVEDORES
+    for nome, info in PROVEDORES.items():
+        if nome in ("anthropic", "outro"):
+            continue
+        assert info["base_url"].startswith("http"), nome
+        assert info["modelo_sugerido"], nome

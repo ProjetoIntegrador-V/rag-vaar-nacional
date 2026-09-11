@@ -22,7 +22,8 @@ rank-bm25>=0.2.2
 
 # ── Chatbot (etapas 5 a 7) ───────────────────────────────────────────────
 streamlit>=1.32.0
-anthropic>=1.0.0                # SDK oficial; o pipeline usa claude-opus-5
+anthropic>=1.0.0                # provedor Anthropic (Claude)
+openai>=1.0.0                   # OpenAI, Groq, Gemini e Ollama pelo protocolo Chat Completions
 
 # ── Suporte ──────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0

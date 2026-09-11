@@ -496,11 +496,30 @@ não num parágrafo inventado pelo modelo.
 é lento em CPU. Ligue na barra lateral quando houver GPU ou quando a precisão
 da ordenação importar mais que a latência.
 
+### Provedor de LLM
+
+O pipeline não depende de um provedor específico. Os scripts da equipe só
+conhecem `cliente_llm.gerar_texto(prompt)`, e dois clientes implementam isso
+(`src/pipeline/llm.py`):
+
+| Provedor | Como | Chave |
+|---|---|---|
+| Anthropic (Claude) | SDK oficial `anthropic` | sim |
+| OpenAI | protocolo Chat Completions | sim |
+| Groq | mesmo protocolo, `base_url` da Groq; tem plano gratuito | sim |
+| Google Gemini | endpoint compatível com OpenAI | sim |
+| Ollama | mesmo protocolo em `localhost:11434`; roda offline | não |
+| Outro | qualquer servidor compatível, informe a `base_url` | depende |
+
+Escolha na barra lateral. O nome do modelo é um campo editável com uma
+sugestão, porque os catálogos mudam; confira no painel do provedor.
+
 ### Credenciais
 
 Os campos da barra lateral ficam só na sessão. Se `QDRANT_URL`,
-`QDRANT_API_KEY` e `ANTHROPIC_API_KEY` existirem no `.env` ou no ambiente, os
-campos já vêm preenchidos. O botão **Testar conexões** valida as duas antes da
+`QDRANT_API_KEY`, `LLM_PROVEDOR`, `LLM_API_KEY` e `LLM_MODELO` existirem no
+`.env` ou no ambiente, os campos já vêm preenchidos (só `ANTHROPIC_API_KEY`
+também funciona). O botão **Testar conexões** valida o banco e o LLM antes da
 primeira pergunta.
 
 ## 11. Como rodar
@@ -571,7 +590,7 @@ src/
   embedding/qwen.py                          chamada do Qwen3, encapsulada
   esparso/bm25.py                            tokenização pt-BR
   pipeline/
-    llm.py                                   cliente Anthropic com gerar_texto()
+    llm.py                                   clientes Anthropic e OpenAI-compatível
     etapas.py                                roteador, reescrita, filtros, HyDE, geração, avaliação
     recuperacao.py                           Qdrant híbrido, reranker, chunk pai
     orquestrador.py                          encadeia os estágios e produz o Trace
