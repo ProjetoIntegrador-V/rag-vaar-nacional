@@ -1,0 +1,16 @@
+# Paleta do Design System do gov.br (https://www.gov.br/ds/).
+# O tema base fica aqui porque o Streamlit aplica estas cores nos componentes
+# que o CSS de src/interface/govbr.py nao alcanca (sliders, toggles, alertas).
+[theme]
+base = "light"
+primaryColor = "#1351B4"          # blue-warm-vivid-70
+backgroundColor = "#F8F8F8"       # gray-2
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#333333"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

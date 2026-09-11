@@ -403,3 +403,42 @@ def test_modo_esparso_nao_gasta_chamada_com_hyde():
     assert t.etapa("hyde").status == "pulado"
     assert "esparso" in t.etapa("hyde").detalhe
     assert not any("Nota Técnica do Inep" in p for p in llm.chamadas), "HyDE nao pode rodar"
+
+
+# ── a resposta sai antes da avaliação ──────────────────────────────────────
+def test_resposta_entregue_antes_da_avaliacao():
+    """O juiz de factualidade é lento e não muda o texto: a interface recebe a
+    resposta antes de ele rodar."""
+    llm = LLMFalso()
+    vistos = []
+
+    def ao_responder(tr):
+        vistos.append({"resposta": tr.resposta, "nota": tr.score_factualidade,
+                       "etapas": [e.nome for e in tr.etapas]})
+
+    t = Pipeline(llm, RecuperadorFalso(DOCS)).executar("condicionalidades",
+                                                      ao_responder=ao_responder)
+    assert len(vistos) == 1, "o callback roda uma vez"
+    assert "Resolução CIF" in vistos[0]["resposta"], "a resposta ja estava pronta"
+    assert vistos[0]["nota"] is None, "a nota ainda nao existia"
+    assert "avaliacao" not in vistos[0]["etapas"], "a avaliacao ainda nao tinha rodado"
+    assert t.score_factualidade == 1.0, "a nota chega depois"
+
+
+def test_callback_nao_roda_quando_para_antes_da_geracao():
+    vistos = []
+    t = Pipeline(LLMFalso(aprovar=False), RecuperadorFalso(DOCS)).executar(
+        "receita de bolo", ao_responder=lambda tr: vistos.append(tr))
+    assert t.desfecho == DESFECHO_DESCARTADA
+    assert vistos == []
+
+
+def test_falha_ao_desenhar_nao_derruba_a_resposta():
+    def quebrado(tr):
+        raise RuntimeError("streamlit caiu")
+
+    t = Pipeline(LLMFalso(), RecuperadorFalso(DOCS)).executar("condicionalidades",
+                                                             ao_responder=quebrado)
+    assert t.desfecho == DESFECHO_RESPONDIDA
+    assert "Resolução CIF" in t.resposta
+    assert "streamlit caiu" in t.etapa("geracao").dados["erro_ao_responder"]

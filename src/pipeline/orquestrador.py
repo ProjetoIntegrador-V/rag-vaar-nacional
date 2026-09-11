@@ -12,11 +12,16 @@ Fluxo:
       -> contexto_pai        sub-chunk -> página inteira
       -> geracao             resposta ancorada com citação
       -> avaliacao           factualidade, não bloqueia a resposta
+
+A avaliação é a etapa mais lenta depois da busca (o juiz relê todo o contexto)
+e não altera uma vírgula do texto gerado. Por isso `executar` aceita
+`ao_responder`: assim que a resposta existe, ela é entregue à interface, e só
+então o juiz é chamado. Quem lê já está lendo enquanto a nota é calculada.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from . import etapas
 from .llm import ClienteLLM
@@ -59,17 +64,21 @@ class Pipeline:
         self.rec = recuperador
         self.cfg = config or ConfigPipeline()
 
-    def executar(self, pergunta: str) -> Trace:
+    def executar(self, pergunta: str,
+                 ao_responder: Callable[[Trace], None] | None = None) -> Trace:
+        """`ao_responder` é chamado assim que a resposta fica pronta, antes da
+        avaliação de factualidade. Serve para a interface mostrar o texto sem
+        esperar o juiz. Não é chamado quando a pergunta para antes da geração."""
         t = Trace(pergunta=pergunta)
         try:
-            self._executar(t)
+            self._executar(t, ao_responder)
         except Exception:  # noqa: BLE001
             # a etapa já foi marcada como erro dentro de `medir`
             t.desfecho = DESFECHO_ERRO
         return t
 
     # ── corpo ────────────────────────────────────────────────────────────
-    def _executar(self, t: Trace) -> None:
+    def _executar(self, t: Trace, ao_responder: Callable[[Trace], None] | None = None) -> None:
         cfg = self.cfg
 
         # 1. roteador: filtro lógico antes do banco
@@ -198,6 +207,14 @@ class Pipeline:
             t.resposta = etapas.gerar(t.pergunta, docs, self.llm)
             e.detalhe = f"{len(t.resposta)} caracteres, {len(docs)} fontes no contexto"
         t.desfecho = DESFECHO_RESPONDIDA
+
+        # A resposta está pronta: entrega antes de chamar o juiz. Uma falha ao
+        # desenhar fica registrada, mas não pode derrubar o que já foi gerado.
+        if ao_responder is not None:
+            try:
+                ao_responder(t)
+            except Exception as exc:  # noqa: BLE001
+                t.etapa("geracao").dados["erro_ao_responder"] = f"{type(exc).__name__}: {exc}"
 
         # 9. avaliação: não bloqueia; erro aqui não derruba a resposta
         if cfg.usar_avaliacao:

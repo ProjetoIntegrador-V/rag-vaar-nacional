@@ -498,6 +498,46 @@ dentro de cada prefetch; o cabeçalho do arquivo lista cada mudança. Cada
 estágio pode ser ligado ou desligado na barra lateral, e um estágio desligado
 aparece na aba Pipeline como "pulado", não some.
 
+### A resposta sai antes da avaliação
+
+A avaliação de factualidade é a etapa mais lenta depois da busca: o juiz relê
+todo o contexto e leva de 5 a 30 segundos. E ela não altera uma vírgula do
+texto gerado, porque só atribui uma nota. Fazer o usuário esperar por ela
+seria cobrar por um trabalho que não muda a resposta dele.
+
+Por isso `Pipeline.executar` aceita `ao_responder`, um callback chamado assim
+que a geração termina e antes de o juiz rodar:
+
+```python
+def ao_responder(trace):
+    st.markdown(trace.resposta)      # já aparece na tela
+    status.caption("avaliando a factualidade...")
+
+trace = pipeline.executar(pergunta, ao_responder=ao_responder)
+st.caption(f"factualidade {trace.score_factualidade}")   # chega depois
+```
+
+Medido na interface: a resposta aparece aos 18,5 s e a nota chega depois, sem
+que o texto mude. Quando a pergunta para antes da geração (barrada no roteador
+ou sem contexto) o callback não é chamado, e a interface desenha o desfecho
+normalmente.
+
+### Identidade visual
+
+A interface segue o Design System do gov.br (https://www.gov.br/ds/): paleta
+azul #1351B4 / #071D41 com amarelo #FFCD07 e verde #168821, tipografia
+Raleway, faixa superior escura, filete verde-amarelo-azul e botões em pílula.
+Os tokens ficam em `src/interface/govbr.py` e o tema base em
+`.streamlit/config.toml`.
+
+O que o projeto **não** usa é a marca gov.br. Este é um trabalho acadêmico da
+FATEC Cotia, não um serviço do governo federal, e a faixa superior diz isso.
+Reproduzir o logotipo faria a página passar por oficial.
+
+As abas usam Material Symbols, que o Streamlit resolve no rótulo:
+`:material/chat:` para o Chat, `:material/psychology:` para o Pipeline e
+`:material/fact_check:` para a Avaliação.
+
 ### Duas decisões que não são óbvias
 
 **O lado esparso não recebe o HyDE.** O documento hipotético vai só para o
@@ -659,6 +699,8 @@ src/
   esparso/bm25.py                            tokenização pt-BR
   pipeline/
     llm.py                                   clientes Anthropic e OpenAI-compatível
+  interface/
+    govbr.py                                 paleta, cabeçalho e ícones do gov.br
     etapas.py                                roteador, reescrita, filtros, HyDE, geração, avaliação
     recuperacao.py                           casca sobre scripts/motor_recuperacao.py + chunk pai
     orquestrador.py                          encadeia os estágios e produz o Trace

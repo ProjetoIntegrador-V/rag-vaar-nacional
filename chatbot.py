@@ -50,8 +50,20 @@ from src.pipeline import (  # noqa: E402
     criar_cliente,
 )
 from src.embedding.qwen import DEFAULT_TASK  # noqa: E402
+from src.interface import (  # noqa: E402
+    ICONE_AVALIACAO,
+    ICONE_CHAT,
+    ICONE_PIPELINE,
+    aplicar_tema,
+    cabecalho,
+    rodape,
+)
 
 st.set_page_config(page_title="RAG VAAR Nacional", page_icon="⚖️", layout="wide")
+aplicar_tema()
+cabecalho("RAG ", "VAAR Nacional",
+          "Assistente sobre a legislação do Fundeb e da complementação VAAR, "
+          "com respostas ancoradas em normas oficiais.")
 
 CAMINHO_VOCAB = RAIZ / "data" / "vocabulario_esparso.json"
 CAMINHO_CHUNKS = RAIZ / "data" / "chunks" / "chunks_fatec_rag.jsonl"
@@ -96,7 +108,8 @@ ss.setdefault("conexao_qdrant", None)
 
 # ── barra lateral ───────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("⚖️ RAG VAAR Nacional")
+    # O nome do projeto já está no cabeçalho; aqui só a função da barra.
+    st.markdown("### Configuração")
 
     st.subheader("Banco vetorial (Qdrant)")
     qdrant_url = st.text_input("Endpoint do cluster", value=os.getenv("QDRANT_URL", ""),
@@ -203,10 +216,21 @@ def montar_pipeline() -> Pipeline:
 
 
 # ── abas ────────────────────────────────────────────────────────────────────
-aba_chat, aba_pipe, aba_aval = st.tabs(["💬 Chat", "🔀 Pipeline", "📊 Avaliação"])
+aba_chat, aba_pipe, aba_aval = st.tabs([
+    f"{ICONE_CHAT} Chat",
+    f"{ICONE_PIPELINE} Pipeline",
+    f"{ICONE_AVALIACAO} Avaliação",
+])
 
 
 # ── chat ────────────────────────────────────────────────────────────────────
+def _legenda(tr: Trace) -> str:
+    """Linha de status sob a resposta: desfecho, factualidade e tempo."""
+    rot, cor = ROTULO_DESFECHO.get(tr.desfecho, ("?", "gray"))
+    nota = "" if tr.score_factualidade is None else f" · factualidade {tr.score_factualidade:.1f}"
+    return f":{cor}[{rot}]{nota} · {tr.duracao_total_ms()/1000:.1f}s"
+
+
 def _render_fontes(trace: Trace) -> None:
     if not trace.fontes:
         return
@@ -227,11 +251,7 @@ with aba_chat:
             st.markdown(m["content"])
             if m["role"] == "assistant" and m.get("trace_idx") is not None:
                 tr = ss.traces[m["trace_idx"]]
-                rot, cor = ROTULO_DESFECHO.get(tr.desfecho, ("?", "gray"))
-                extra = ""
-                if tr.score_factualidade is not None:
-                    extra = f" · factualidade {tr.score_factualidade:.1f}"
-                st.caption(f":{cor}[{rot}]{extra} · {tr.duracao_total_ms()/1000:.1f}s")
+                st.caption(_legenda(tr))
                 _render_fontes(tr)
 
     pergunta = st.chat_input("Pergunte sobre o Fundeb ou o VAAR", disabled=not credenciais_ok)
@@ -240,23 +260,42 @@ with aba_chat:
         with st.chat_message("user"):
             st.markdown(pergunta)
         with st.chat_message("assistant"):
-            with st.spinner("passando pelo pipeline..."):
-                try:
-                    pipeline = montar_pipeline()
-                    trace = pipeline.executar(pergunta)
-                except Exception as exc:  # noqa: BLE001
-                    trace = Trace(pergunta=pergunta)
-                    trace.desfecho = DESFECHO_ERRO
-                    trace.erro = f"{type(exc).__name__}: {exc}"
-                    trace.resposta = f"Falha ao montar o pipeline: {trace.erro}"
-            ss.traces.append(trace)
-            idx = len(ss.traces) - 1
+            espera = st.empty()
+            corpo = st.container()
+            status = st.empty()
+            espera.markdown("_passando pelo pipeline..._")
+            estado = {"mostrada": False}
+
+            def ao_responder(tr: Trace) -> None:
+                """Chamado pelo pipeline assim que a resposta existe, ANTES da
+                avaliação de factualidade. O juiz relê todo o contexto e leva
+                segundos sem mudar uma vírgula do texto, então quem perguntou
+                já começa a ler enquanto a nota é calculada."""
+                estado["mostrada"] = True
+                espera.empty()
+                with corpo:
+                    st.markdown(tr.resposta or "Sem resposta.")
+                    _render_fontes(tr)
+                status.caption("avaliando a factualidade...")
+
+            try:
+                trace = montar_pipeline().executar(pergunta, ao_responder=ao_responder)
+            except Exception as exc:  # noqa: BLE001
+                trace = Trace(pergunta=pergunta)
+                trace.desfecho = DESFECHO_ERRO
+                trace.erro = f"{type(exc).__name__}: {exc}"
+                trace.resposta = f"Falha ao montar o pipeline: {trace.erro}"
+
+            espera.empty()
             texto = trace.resposta or "Sem resposta."
-            st.markdown(texto)
-            rot, cor = ROTULO_DESFECHO.get(trace.desfecho, ("?", "gray"))
-            st.caption(f":{cor}[{rot}] · {trace.duracao_total_ms()/1000:.1f}s")
-            _render_fontes(trace)
-            ss.mensagens.append({"role": "assistant", "content": texto, "trace_idx": idx})
+            if not estado["mostrada"]:      # parou antes da geração, ou falhou
+                with corpo:
+                    st.markdown(texto)
+                    _render_fontes(trace)
+            status.caption(_legenda(trace))
+            ss.traces.append(trace)
+            ss.mensagens.append({"role": "assistant", "content": texto,
+                                 "trace_idx": len(ss.traces) - 1})
 
 
 # ── pipeline ────────────────────────────────────────────────────────────────
