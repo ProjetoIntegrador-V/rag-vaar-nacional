@@ -21,7 +21,7 @@ Projeto Integrador V.
 9. [Etapa 6: geração](#9-etapa-6-geração)
 10. [Etapa 7: avaliação](#10-etapa-7-avaliação)
     [Chatbot](#chatbot)
-11. [Como rodar](#11-como-rodar)
+11. [Como rodar](#11-como-rodar) **(instalação passo a passo, `.env` e chaves)**
 12. [Estrutura do repositório](#12-estrutura-do-repositório)
 13. [Pendências conhecidas](#13-pendências-conhecidas)
 
@@ -657,52 +657,253 @@ primeira pergunta.
 
 ## 11. Como rodar
 
+Passo a passo do zero até o chatbot respondendo. Tudo acontece dentro da pasta
+do repositório, chamada aqui de **RAIZ**: é a pasta que contém o `chatbot.py`.
+
+```
+rag-vaar-nacional/        <- RAIZ
+├── chatbot.py
+├── requirements.txt
+├── .env                  <- você vai criar este arquivo (passo 11.4)
+├── .env.example
+├── data/
+├── notebooks/
+├── scripts/
+└── src/
+```
+
+### 11.1 O que você precisa antes
+
+| O quê | Onde consegue | Custa |
+|---|---|---|
+| Python 3.10 ou mais novo | python.org | grátis |
+| Git | git-scm.com | grátis |
+| Conta no Qdrant Cloud | cloud.qdrant.io | grátis, 1 GB basta |
+| Chave de um provedor de LLM | console.groq.com | grátis |
+| Cerca de 3 GB livres em disco | modelos baixados do HuggingFace | |
+
+Confira o Python antes de começar:
+
+```bash
+python --version
+```
+
+Se aparecer 3.9 ou menor, instale uma versão mais nova. O código usa sintaxe de
+tipos que só existe a partir do 3.10.
+
+### 11.2 Baixar o projeto
+
+```bash
+git clone https://github.com/ProjetoIntegrador-V/rag-vaar-nacional.git
+cd rag-vaar-nacional
+```
+
+A partir daqui, **todos os comandos deste guia são executados de dentro desta
+pasta**, a RAIZ.
+
+### 11.3 Ambiente virtual e dependências
+
+O ambiente virtual isola as bibliotecas deste projeto das do resto da máquina.
+
+**Windows, no PowerShell:**
+
 ```bash
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-### Credenciais
+Se o PowerShell recusar o script com "execução de scripts foi desabilitada",
+rode uma vez `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` e tente de
+novo. No Prompt de Comando antigo o ativador é `.venv\Scripts\activate.bat`.
 
-Copie `.env.example` para `.env` e preencha:
+**Linux ou macOS:**
 
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
-QDRANT_URL=https://SEU-CLUSTER.sa-east-1-0.aws.cloud.qdrant.io
-QDRANT_API_KEY=sua-chave
+
+Deu certo quando o nome `(.venv)` aparece no começo da linha do terminal. Esse
+passo baixa cerca de 2 GB (o PyTorch é o maior deles) e leva alguns minutos.
+
+**Toda vez que abrir um terminal novo, ative o ambiente de novo** antes de
+rodar qualquer comando do projeto.
+
+### 11.4 O arquivo .env: onde fica e o que escrever
+
+O `.env` guarda as chaves. Ele fica **na RAIZ, ao lado do `chatbot.py`**, no
+caminho `rag-vaar-nacional/.env`. Não é dentro de `src/`, nem de `data/`, nem
+de `notebooks/`.
+
+Comece copiando o modelo que já vem no repositório:
+
+```bash
+cp .env.example .env
 ```
 
-O `.env` está no `.gitignore`. **Nunca comite a chave**: uma vez no histórico do
-Git ela vaza, mesmo que o arquivo seja apagado depois. Se preferir não criar
-arquivo, o notebook pergunta na hora e a chave não aparece na tela.
+No Windows, no PowerShell, o comando é `Copy-Item .env.example .env`.
 
-### Etapa 4, embeddings e carga
+Agora abra `rag-vaar-nacional/.env` em qualquer editor de texto e preencha. O
+arquivo inteiro fica assim:
 
-Abra `notebooks/02_embeddings_qdrant.ipynb` e execute de cima para baixo. Ele
-cria a coleção, sobe os 422 chunks úteis e valida a busca.
+```ini
+# ── Qdrant Cloud ────────────────────────────────────────────────────────
+QDRANT_URL=https://ab12cd34-5678-90ef-ghij-klmnopqrstuv.sa-east-1-0.aws.cloud.qdrant.io
+QDRANT_API_KEY=COLE-AQUI-A-CHAVE-DO-QDRANT
 
-> Na primeira execução baixa cerca de **1,2 GB** do HuggingFace, o peso do
-> modelo. Com GPU leva poucos minutos; em CPU, bem mais. No Colab, ative a GPU em
-> `Ambiente de execução > Alterar tipo`.
+# ── Modelo de embedding ─────────────────────────────────────────────────
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
 
-Para rodar sem conta e sem rede, troque `MODO_QDRANT` para `"local"` na célula de
-configuração. O resto do notebook é idêntico.
+# ── LLM da etapa de geração ─────────────────────────────────────────────
+LLM_PROVEDOR=groq
+LLM_API_KEY=COLE-AQUI-A-CHAVE-DO-PROVEDOR
+LLM_MODELO=openai/gpt-oss-120b
+LLM_BASE_URL=
+```
 
-### Chatbot
+Regras que evitam dor de cabeça:
+
+- **sem aspas** em volta dos valores: `QDRANT_API_KEY=eyJhbGci...`, não
+  `QDRANT_API_KEY="eyJhbGci..."`;
+- **sem espaço** antes ou depois do `=`;
+- **a chave inteira em uma linha só**. A chave do Qdrant tem cerca de 180
+  caracteres e o editor pode quebrá-la visualmente; o que não pode é ter uma
+  quebra de linha de verdade no meio;
+- **o arquivo se chama `.env`**, com o ponto na frente e sem extensão. O Bloco
+  de Notas do Windows costuma salvar como `.env.txt`: no diálogo de salvar,
+  escolha "Todos os arquivos" em Tipo.
+
+O `.env` está no `.gitignore`, então o Git o ignora. **Nunca comite a chave**:
+uma vez no histórico do Git ela vaza, mesmo que o arquivo seja apagado depois.
+Se preferir não criar arquivo nenhum, dá para digitar as chaves direto na barra
+lateral do chatbot: elas ficam só na sessão e não são gravadas em disco.
+
+### 11.5 De onde vem cada chave
+
+**Qdrant (`QDRANT_URL` e `QDRANT_API_KEY`)**
+
+1. Crie uma conta em https://cloud.qdrant.io.
+2. Em **Clusters**, clique em **Create** e escolha o plano gratuito. A região
+   `sa-east-1` (São Paulo) é a mais próxima.
+3. Quando o cluster ficar verde, copie o **Cluster endpoint**. É a URL que
+   termina em `.cloud.qdrant.io` e vai em `QDRANT_URL`. Copie sem barra no
+   final e sem a porta.
+4. Em **Data Access Control** (ou **API Keys**), clique em **Create** e copie a
+   chave. Ela é longa, começa com `eyJ` e **só aparece uma vez**: se fechar a
+   janela sem copiar, é preciso gerar outra. Essa chave vai em
+   `QDRANT_API_KEY`.
+
+**LLM (`LLM_PROVEDOR`, `LLM_API_KEY`, `LLM_MODELO`)**
+
+O projeto não depende de um provedor específico. O mais simples é a Groq, que
+tem plano gratuito:
+
+1. Crie uma conta em https://console.groq.com.
+2. Em **API Keys**, clique em **Create API Key** e copie. A chave começa com
+   `gsk_` e vai em `LLM_API_KEY`.
+3. Deixe `LLM_PROVEDOR=groq`.
+4. Em `LLM_MODELO`, escreva o nome de um modelo que a sua conta enxerga. O
+   catálogo da Groq muda com frequência: em 2026 o `llama-3.3-70b-versatile`
+   saiu do ar e o padrão do projeto passou a ser `openai/gpt-oss-120b`. Se o
+   nome estiver errado, o botão **Testar conexões** do chatbot lista os
+   modelos disponíveis para a sua chave.
+
+Para usar outro provedor, veja a tabela da seção **Provedor de LLM**. Com
+Ollama rodando na sua máquina não é preciso chave nenhuma.
+
+### 11.6 Carregar os documentos no Qdrant
+
+Se a coleção `vaar_rag` ainda não existe no seu cluster, é preciso criá-la e
+subir os chunks uma vez.
+
+Abra `notebooks/03_carga_qdrant.ipynb` e execute as células de cima para baixo.
+Ele lê `data/chunks/chunks_fatec_rag.jsonl`, gera os vetores denso e esparso e
+sobe tudo para o Qdrant, além de salvar
+`data/vocabulario_esparso.json`, que a busca lexical precisa.
+
+> Na primeira execução ele baixa cerca de **1,2 GB** do HuggingFace, que é o
+> peso do modelo de embedding. Com GPU leva poucos minutos; em CPU, bem mais.
+> No Google Colab, ative a GPU em `Ambiente de execução > Alterar tipo`.
+
+O `notebooks/02_embeddings_qdrant.ipynb` é o de demonstração da busca: serve
+para conferir a recuperação depois que a carga terminou.
+
+Este passo é feito **uma vez**. Depois disso o chatbot só consulta.
+
+### 11.7 Rodar o chatbot
+
+Com o ambiente virtual ativo e dentro da RAIZ:
 
 ```bash
 streamlit run chatbot.py
 ```
 
-Na primeira pergunta ele carrega o Qwen3-Embedding-0.6B. Com o reranker
-ligado, carrega também o `bge-reranker-v2-m3`.
+O navegador abre sozinho em `http://localhost:8501`. Se não abrir, copie o
+endereço que apareceu no terminal.
 
-### Demonstração e testes
+Para parar, volte ao terminal e aperte `Ctrl+C`.
+
+### 11.8 Conferir se está tudo certo
+
+Na barra lateral, os campos já vêm preenchidos com o que está no `.env`.
+Clique em **Testar conexões**. O esperado são duas faixas verdes:
+
+```
+LLM: conectado a openai/gpt-oss-120b em Groq (tem plano gratuito)
+Qdrant: coleção 'vaar_rag' com 2539 pontos
+```
+
+Se as duas aparecerem, pode perguntar. Se alguma vier vermelha, a mensagem diz
+o que está errado; a seção 11.10 lista os casos mais comuns.
+
+### 11.9 O que cada campo da barra lateral faz
+
+| Campo | Para que serve |
+|---|---|
+| **Endpoint do cluster** | URL do Qdrant. Vem de `QDRANT_URL` |
+| **API key do Qdrant** | vem de `QDRANT_API_KEY`; fica só na sessão |
+| **Coleção** | nome da coleção no Qdrant, `vaar_rag` |
+| **Provedor** | Anthropic, OpenAI, Groq, Gemini, Ollama ou outro compatível |
+| **API key** do LLM | vem de `LLM_API_KEY`; desabilitada no Ollama, que não usa |
+| **Modelo** | nome do modelo no provedor; é editável porque os catálogos mudam |
+| **Modo** de busca | híbrida, só esparsa (rápida, sem Qwen) ou só densa |
+| **Estágios do pipeline** | liga e desliga cada etapa; a aba Pipeline mostra as desligadas como "pulado" |
+| **Candidatos da busca híbrida** | quantos trechos o banco devolve antes do reranking |
+| **Trechos enviados ao LLM** | quantos sobram depois do reranking |
+| **Tamanho do contexto** | teto de caracteres mandados ao LLM, para não estourar o limite do provedor |
+
+Numa máquina sem GPU, a combinação que responde mais rápido é **Modo: só
+esparsa** com o **HyDE desligado**: a busca cai de dezenas de segundos para
+cerca de 50 ms. A busca híbrida acha mais coisa, mas paga o preço de vetorizar
+a consulta na CPU. A seção **Onde vai o tempo** tem os números medidos.
+
+### 11.10 Erros comuns
+
+| Mensagem | O que aconteceu | Como resolver |
+|---|---|---|
+| `ModuleNotFoundError: No module named 'streamlit'` | o ambiente virtual não está ativo | ative o `.venv` (passo 11.3) |
+| `endpoint do Qdrant ausente` | o campo da URL está vazio | preencha `QDRANT_URL` no `.env` ou o campo na barra lateral |
+| `WinError 10061` ou `Connection refused` | a URL está vazia e o cliente tentou `localhost` | mesma coisa acima |
+| `403 Forbidden` no Qdrant | chave errada, incompleta ou com espaço | gere outra chave e cole inteira, sem aspas |
+| `coleção 'vaar_rag' não existe` | a carga ainda não foi feita | rode `notebooks/03_carga_qdrant.ipynb` (passo 11.6) |
+| `coleção 'vaar_rag' existe mas está vazia` | a carga começou e não terminou | rode o notebook de novo até o fim |
+| `API key inválida` no LLM | chave do provedor errada | confira em console.groq.com |
+| `modelo 'X' não encontrado` | o nome saiu do catálogo do provedor | use um dos nomes que o **Testar conexões** lista |
+| `requisição grande demais para o provedor` | o contexto passou do limite do plano | baixe **Tamanho do contexto** na barra lateral |
+| `data/vocabulario_esparso.json não existe` | o arquivo do vocabulário não foi gerado | rode `notebooks/03_carga_qdrant.ipynb` |
+| a busca demora mais de 30 segundos | o Qwen está vetorizando na CPU | troque o **Modo** para "só esparsa" ou desligue o **HyDE** |
+| as respostas vêm com "não contém essa informação" | a busca não achou o trecho | volte para o modo híbrido, que acha mais que o esparso puro |
+
+### 11.11 Demonstração e testes
 
 ```bash
 python scripts/demo_componentes.py    # denso e lexical lado a lado, sem baixar modelo
-pytest -q                             # 29 testes; os do pipeline usam LLM e Qdrant falsos
+pytest -q                             # 58 testes; usam LLM e Qdrant falsos, não gastam chave
 ```
+
+Os dois rodam de dentro da RAIZ, com o ambiente virtual ativo.
 
 ---
 
