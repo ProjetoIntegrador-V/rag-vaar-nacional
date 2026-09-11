@@ -7,6 +7,9 @@ env/
 .env
 .env.local
 
+# Marca deixada pelo executar.bat quando a instalacao foi a minima
+.modo_instalado
+
 # ── Artefatos gerados pelo notebook de embeddings ─────────────────────────
 # A colecao e reconstruivel: rode notebooks/02_embeddings_qdrant.ipynb.
 data/qdrant/

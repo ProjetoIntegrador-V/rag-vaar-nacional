@@ -484,3 +484,19 @@ def test_mensagem_do_429_distingue_dia_de_minuto(bruto, esperado):
     msg = _explicar_429(bruto)
     assert esperado in msg
     assert ".." not in msg, "o tempo de espera nao pode sair com ponto duplicado"
+
+
+# ── instalação mínima ──────────────────────────────────────────────────────
+def test_busca_densa_sem_torch_da_mensagem_util(monkeypatch):
+    """Quem instalou pelo requirements-minimo.txt não tem sentence-transformers.
+    Trocar para a busca híbrida tem de explicar o que fazer, não estourar um
+    ModuleNotFoundError cru."""
+    import importlib.util as iu
+
+    from src.pipeline import carregar_embedder
+
+    real = iu.find_spec
+    monkeypatch.setattr(iu, "find_spec",
+                        lambda n, *a, **k: None if n == "sentence_transformers" else real(n, *a, **k))
+    with pytest.raises(RuntimeError, match="requirements.txt"):
+        carregar_embedder()

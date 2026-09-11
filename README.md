@@ -40,9 +40,21 @@ rag-vaar-nacional/
 | Windows | clique duas vezes em **`executar.bat`** |
 | Linux ou macOS | abra o terminal na pasta e rode `bash executar.sh` |
 
-O script cria o ambiente, instala as bibliotecas e abre o chatbot em
-http://localhost:8501. **Na primeira vez demora alguns minutos**, porque baixa
-cerca de 2 GB de bibliotecas; nas vezes seguintes abre em segundos.
+Na primeira execução o script pergunta como instalar:
+
+| Escolha | Tempo | Espaço | O que você tem |
+|---|---|---|---|
+| **1. Rápido** (padrão) | ~3 min | 460 MB | busca por palavra (BM25), já com citação da norma |
+| **2. Completo** | ~10 min | 2 GB | acrescenta a busca semântica com o modelo Qwen |
+
+A diferença inteira é o PyTorch e o modelo de embedding, que só entram na
+busca densa. Se ninguém responder em 20 segundos, ele segue no **Rápido**, que
+é o suficiente para ver o sistema inteiro funcionando. Para ligar a busca
+semântica depois, rode `pip install -r requirements.txt` dentro da pasta e
+troque o **Modo** na barra lateral.
+
+Depois disso o script abre o chatbot em http://localhost:8501. Nas execuções
+seguintes ele pula a instalação e abre em segundos.
 
 Pronto. Clique em **Testar conexões** na barra lateral: as duas faixas verdes
 confirmam que o banco e o modelo responderam. Depois é só perguntar.
@@ -72,6 +84,7 @@ streamlit run chatbot.py
 | `[ERRO] O arquivo .env nao esta nesta pasta` | o `.env` foi para o lugar errado; ele vai na mesma pasta do `chatbot.py` |
 | o Windows salvou como `.env.txt` | renomeie para `.env`, sem extensão |
 | a resposta demora mais de 30 segundos | na barra lateral, em **Busca**, troque o **Modo** para "Só esparsa" |
+| `a busca semântica precisa do PyTorch` | você instalou pelo modo Rápido; rode `pip install -r requirements.txt` ou fique no modo "Só esparsa" |
 
 A seção [11. Como rodar](#11-como-rodar) tem o passo a passo detalhado e uma
 tabela de erros mais completa.
@@ -818,12 +831,23 @@ pasta**, a RAIZ.
 
 O ambiente virtual isola as bibliotecas deste projeto das do resto da máquina.
 
+Há dois arquivos de dependências:
+
+| Arquivo | Tamanho | Para quê |
+|---|---|---|
+| `requirements-minimo.txt` | 460 MB | roda o chatbot em busca esparsa (BM25) |
+| `requirements.txt` | 2 GB | tudo, inclusive PyTorch e o modelo de embedding |
+
+A diferença é só o PyTorch e o `sentence-transformers`. Comece pelo mínimo se
+quiser ver o sistema rodando logo; o completo pode ser instalado por cima
+depois, sem refazer nada.
+
 **Windows, no PowerShell:**
 
 ```bash
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-minimo.txt
 ```
 
 Se o PowerShell recusar o script com "execução de scripts foi desabilitada",

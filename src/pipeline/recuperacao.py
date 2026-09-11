@@ -167,6 +167,18 @@ class Recuperador:
 def carregar_embedder(modelo: str = "Qwen/Qwen3-Embedding-0.6B"):
     """Qwen3 com a trava de tokens. Sem sentence_bert_config.json o
     sentence-transformers assume 32768 e estoura memória em texto longo."""
+    import importlib.util
+
+    # A instalação rápida (requirements-minimo.txt) não traz PyTorch nem
+    # sentence-transformers. Sem esta checagem o usuário receberia um
+    # ModuleNotFoundError cru ao trocar para a busca híbrida.
+    if importlib.util.find_spec("sentence_transformers") is None:
+        raise RuntimeError(
+            "a busca semântica precisa do PyTorch e do sentence-transformers, "
+            "que não estão instalados. Use o modo 'Só esparsa' na barra lateral, "
+            "ou instale o restante com:  pip install -r requirements.txt"
+        )
+
     from src.embedding import QwenEmbedder
 
     usar_todos_os_nucleos()

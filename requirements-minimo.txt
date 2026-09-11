@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Instalacao minima: roda o chatbot em modo de busca ESPARSA (BM25).
+#
+# Sao cerca de 460 MB e tres minutos, contra 2 GB e dez minutos do
+# requirements.txt completo. A diferenca inteira e o PyTorch e o modelo de
+# embedding, que so entram na busca densa e hibrida.
+#
+# O que voce perde: a busca semantica. Perguntas com ancora exata
+# ("art. 14", "Portaria 14") continuam sendo bem atendidas pelo BM25;
+# perguntas em linguagem de leigo ficam piores.
+#
+# Para ligar a busca semantica depois:  pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────────────────
+
+streamlit>=1.32.0
+qdrant-client>=1.12.0
+openai>=1.0.0                   # OpenAI, Groq, Gemini e Ollama
+anthropic>=1.0.0                # provedor Anthropic (Claude)
+python-dotenv>=1.0.0
+numpy>=1.24.0
+rank-bm25>=0.2.2
